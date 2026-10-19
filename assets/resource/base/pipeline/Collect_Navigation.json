@@ -1052,7 +1052,7 @@
         "focus": "CM.N.区域地图.tp1.选择首选传送阵图标"
     },
     "Collect_ClickTelepor_Retry_First": {
-        "desc": "[区域地图·点传送阵③]点首选后仍在面板上 ⇒ 重试或换次选。★2026-10-19: 原 White 的 next 自环无界,首选为灰色未激活阵时点了不传送就无限循环(10-19 沙漠之花 tp2 实测 130+ 圈;PC 08-23 实录 2778 圈)。现每次选阵(Collect_ClickTeleporCircleIco 清零计数)首选最多补点 3 次,仍不传送则改点次选一次;两边都用完 ⇒ on_error 结束本卡带。只挂在 base next 上,Setup_ResetLoc_JumpBackUse 整份替换 next 时不受影响。",
+        "desc": "[区域地图·点传送阵③]点首选后仍在面板上 ⇒ 重试或换次选。★2026-10-19: 原 White 的 next 自环无界,首选为灰色未激活阵时点了不传送就无限循环(10-19 沙漠之花 tp2 实测 130+ 圈;PC 08-23 实录 2778 圈)。现每次选阵(Collect_ClickTeleporCircleIco 清零计数)首选最多补点 3 次,仍不传送则最多换到次选一次(次选同样最多补点 3 次);两边都用完 ⇒ on_error 结束本卡带。只挂在 base next 上,Setup_ResetLoc_JumpBackUse 整份替换 next 时不受影响。",
         "recognition": "Or",
         "any_of": [
             "Collect_ClickTelepor_TargetClass_White"

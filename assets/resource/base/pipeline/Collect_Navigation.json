@@ -964,7 +964,7 @@
         "focus": "CM.N.区域地图.tp1.找到传送阵图标"
     },
     "Collect_ClickTelepor_TargetClass_Purple": {
-        "desc": "紫色传送阵,点一次就消失了,留下一个位置异常.应该去点白色",
+        "desc": "紫色传送阵,点一次就消失了,留下一个位置异常.应该去点白色。★2026-10-19: count 1→30 且 connected —— 普通白金传送阵边缘常有 1~2 个像素落进这个 RGB 范围(实测血骑士 tp2 的 (515,376)、施塔因之塔的 (622,332)),count=1 时会误判为紫色。",
         "recognition": "ColorMatch",
         "roi": "Collect_ClickTeleporCircleIco",
         "lower": [
@@ -977,7 +977,8 @@
             144,
             255
         ],
-        "count": 1,
+        "connected": true,
+        "count": 30,
         "timeout": 3000,
         "next": [
             "Collect_ClickTelepor_TargetClass_PurpleProcess"
@@ -990,6 +991,8 @@
         "focus": "CTB.[WRN]识别首选为紫色技能传送阵,尝试规避"
     },
     "Collect_ClickTelepor_TargetClass_PurpleProcess": {
+        "desc": "点该页第 2 个圈图标。★2026-10-19: 加 max_hit 与 on_error —— 次选图标点了不传送时,原先 next 里的自我重试会无限循环;超过 5 次后回落点首选(White)。",
+        "max_hit": 5,
         "recognition": "TemplateMatch",
         "roi": [
             100,
@@ -1008,6 +1011,11 @@
             "Collect_Skill_Entry",
             "Collect_ClickTelepor_TargetClass_PurpleProcess",
             "[JumpBack]Global_WaitingForLoading"
+        ],
+        "on_error": [
+            "Collect_ClickTelepor_TargetClass_White",
+            "Global_Null_Exception",
+            "Global_Null_Panic"
         ],
         "focus": "CM.N.选择次选传送阵"
     },

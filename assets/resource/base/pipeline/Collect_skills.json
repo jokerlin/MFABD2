@@ -70,7 +70,7 @@
         }
     },
     "Collect_Skill3_1_Nothing": {
-        "desc": "3-1'探查'栏位为空,跳过本栏位继续吸取。roi 是本栏位本体 Collect_Skill3_1 的框往外放了一圈(80x85 罩住 66x67),PC 覆盖侧则与本体同框。",
+        "desc": "3-1'探查'栏位为空,跳过本栏位继续吸取。roi 是本栏位本体 Collect_Skill3_1 的框往外放了一圈(80x85 罩住 66x67),PC 覆盖侧则与本体同框。技能检查通过的 task 里由 Setup_SkillScan_Success_Patch 关闭。",
         "recognition": "TemplateMatch",
         "roi": [
             963,
@@ -158,7 +158,7 @@
         }
     },
     "Collect_Skill3_2_Nothing": {
-        "desc": "如果吸取技能不存在，流程无意义。改出口锚 QuickSkill_Egress→Collect_Skill_KillFocus，接着把剩下能放的放完，走到模块正常出口 Collect_Skill_TapReset 时再结束整个 task。",
+        "desc": "如果吸取技能不存在，流程无意义。改出口锚 QuickSkill_Egress→Collect_Skill_KillFocus，接着把剩下能放的放完，走到模块正常出口 Collect_Skill_TapReset 时再结束整个 task。技能检查通过的 task 里由 Setup_SkillScan_Success_Patch 关闭。",
         "recognition": "TemplateMatch",
         "roi": [
             933,
@@ -353,7 +353,7 @@
         "focus": "CSB.'召集'施放次数已满,栏位3-3 本轮不再识别"
     },
     "Collect_Skill3_3_Nothing": {
-        "desc": "栏位3-3 没有设置技能 ⇒ 跳过本栏位。",
+        "desc": "栏位3-3 没有设置技能 ⇒ 跳过本栏位。技能检查通过的 task 里由 Setup_SkillScan_Success_Patch 关闭。",
         "recognition": "TemplateMatch",
         "roi": [
             966,

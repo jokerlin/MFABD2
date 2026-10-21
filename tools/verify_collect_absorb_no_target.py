@@ -261,6 +261,22 @@ class SkillSlotTests(unittest.TestCase):
         self.assertEqual([name for name, _ in failed], ["Collect_Skill3_1_Start", SUMMON_START, SUPPRESS_START])
         self.assertEqual(names[-2:], ["Collect_Skill3_5_Pass", "Collect_Skill_TapReset"])
 
+    def test_scan_success_disables_nothing_candidates(self):
+        # 吸取栏的「未设置」改成必中来模拟空栏位：检查通过的 task 里它不再参与，没走检查时照常命中
+        _, without_toast, used = load_frames()
+        nothing = "Collect_Skill3_2_Nothing"
+        scan = {
+            ENTRY: {"next": ["[JumpBack]Setup_SkillScan_Success", ABSORB_START]},
+            "Setup_SkillScan_Success": {"action": "DoNothing", "max_hit": 1},  # 不测检查本身与打卡
+        }
+        for label, layer, expect_nothing in (("scanned", scan, False), ("not scanned", {}, True)):
+            with self.subTest(label):
+                overrides = merged(ABSORB_ONLY, {nothing: {"recognition": "DirectHit"}}, layer)
+                (controller, names, timed_out, _), = self.run_tasks(overrides, SkillBarController(without_toast, used))
+                self.assertFalse(timed_out)
+                self.assertEqual(nothing in names, expect_nothing)
+                self.assertEqual(controller.absorb_clicks(), 0 if expect_nothing else 1)
+
     def test_depleted_slot_bypassed_until_task_ends(self):
         _, without_toast, _ = load_frames()
         overrides = merged(
@@ -328,7 +344,9 @@ class SkillSlotTests(unittest.TestCase):
             self.assertTrue(tasker.bind(resource, controller))
             watchdog.start()
             detail = tasker.post_task(ENTRY).wait().get()
-            names = [node.name for node in detail.nodes if node and node.name]
+            self.assertIsNotNone(detail)
+            assert detail
+            names =[node.name for node in detail.nodes if node and node.name]
             return controller, names, fired.is_set(), failed.items
         finally:
             watchdog.cancel()

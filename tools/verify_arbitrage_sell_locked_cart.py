@@ -46,6 +46,7 @@ with patch.object(AgentServer, "custom_action", return_value=lambda cls: cls), \
      patch.object(AgentServer, "context_sink", return_value=lambda cls: cls), \
      patch.object(AgentServer, "tasker_sink", return_value=lambda cls: cls), \
      patch.object(AgentServer, "_set_api_properties"):
+    from action import arbitrage_result as result_controller
     from action import arbitrage_sell_batch as dispatch
     from action.clear_node_hit_count import ClearNodeHitCountAction
 
@@ -172,6 +173,7 @@ class SellLockedCartTests(unittest.TestCase):
             tasker=SimpleNamespace(stopping=False),
             clone=lambda: ui,
             clear_hit_count=lambda name: True,
+            get_node_object=lambda name: SimpleNamespace(attach={}),
             run_task=lambda entry, pipeline_override: SimpleNamespace(
                 status=SimpleNamespace(succeeded=True),
                 nodes=[
@@ -180,6 +182,19 @@ class SellLockedCartTests(unittest.TestCase):
                 ],
             ),
         )
+        market = {
+            "complete": True,
+            "items": [{
+                "name": "草药三明治",
+                "is_max_price": True,
+                "target_cartridge": "剧情游戏卡17",
+                "cart_score": 1.0,
+                "cart_conflict": False,
+                "current_rate": 130,
+                "cartridge_read_basis": "direct",
+            }],
+        }
+        logs = []
         with ExitStack() as mocks:
             for name, value in (("sync_from_context", True), ("check_scope", None)):
                 mocks.enter_context(patch.object(dispatch, name, return_value=value))
@@ -190,7 +205,12 @@ class SellLockedCartTests(unittest.TestCase):
             invalidated = mocks.enter_context(patch.object(
                 dispatch.store, "invalidate_inventory_quantities", return_value=True))
             mocks.enter_context(patch.object(dispatch.gold_verify, "clear_verdict"))
+            mocks.enter_context(patch.object(result_controller, "market_day", return_value="2026-10-21"))
+            mocks.enter_context(patch.object(result_controller, "get_market_snapshot", return_value=market))
+            mocks.enter_context(patch.object(result_controller, "_load_recipe_names", return_value={"草药三明治"}))
+            mocks.enter_context(patch.object(result_controller.mfaalog, "info", side_effect=logs.append))
             result = dispatch.execute_sale_item(ui, "草药三明治", {}, reserve=0)
+            self.assertTrue(result_controller.ArbitrageSellController()._run(ui, {"mode": "sell"}))
         self.assertEqual(result["status"], "skipped")
         self.assertTrue(result["page_ok"])
         self.assertEqual(result["actual_quantity"], 0)
@@ -200,6 +220,11 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertIsNone(result["batches"][0]["inventory_after"])
         saved.assert_not_called()
         invalidated.assert_not_called()
+        self.assertIn("[Arbitrage] [草药三明治] 目标卡带尚未解锁，已跳过", logs)
+        self.assertIn("[Arbitrage] 本轮1项目标卡带尚未解锁，已跳过", logs)
+        self.assertTrue(any("尚未解锁" in line for line in logs))
+        self.assertFalse(any("当前无可卖数量" in line for line in logs))
+        self.assertFalse(any("无可卖数量" in line for line in logs))
 
     def test_pipeline_shape(self):
         base = json.loads((BASE / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))

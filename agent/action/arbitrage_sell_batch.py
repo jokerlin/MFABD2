@@ -203,8 +203,7 @@ def execute_sale_item(context, item_name, base_override, *, reserve=0, target=No
             detail = local.run_task(entry, pipeline_override=_overrides(base_override, request))
             if (batch.status == "new" and detail is not None
                     and any(node.name == _LOCKED and node.completed for node in detail.nodes)):
-                batch.status = "skipped"
-                batch.reason = "目标卡带尚未解锁"
+                batch.locked()
             if batch.status not in ("confirmed", "skipped", "rejected", "unknown"):
                 batch.fail("出售链未取得本批确认结果")
         except Exception as exc:

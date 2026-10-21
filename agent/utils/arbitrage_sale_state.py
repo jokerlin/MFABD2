@@ -86,6 +86,12 @@ class SaleBatch:
         else:
             raise ValueError("当前状态不允许用列表缺失判零")
 
+    def locked(self):
+        if self.status != "new":
+            raise ValueError("当前状态不允许标记卡带未解锁")
+        self.status = "skipped"
+        self.reason = "目标卡带尚未解锁"
+
     def fail(self, reason):
         self.reason = str(reason)
         self.status = "unknown" if self.uncertain else "rejected"

@@ -621,7 +621,7 @@ class ArbitrageSellController(CustomAction):
         final_sell_names = [t["name"] for t in targets_to_sell]
         mfaalog.info(f"[Arbitrage] 🛒 确认共 {len(targets_to_sell)} 项物品待出售: {', '.join(final_sell_names)}")
 
-        sold_ok, sold_fail, sold_skipped = [], [], []
+        sold_ok, sold_fail, sold_skipped, sold_locked = [], [], [], []
         for idx, target in enumerate(targets_to_sell, 1):
             if context.tasker.stopping: break
             if mode == _MODE_SELL and market_day() != final_market_day:
@@ -682,8 +682,13 @@ class ArbitrageSellController(CustomAction):
             if outcome and outcome["status"] == "confirmed":
                 sold_ok.append(item_name)
             elif outcome and outcome["status"] == "skipped":
-                sold_skipped.append(item_name)
-                mfaalog.info(f"[Arbitrage] [{item_name}] 当前无可卖数量")
+                reason = (outcome.get("batches") or [{}])[-1].get("reason")
+                if reason == "目标卡带尚未解锁":
+                    sold_locked.append(item_name)
+                    mfaalog.info(f"[Arbitrage] [{item_name}] 目标卡带尚未解锁，已跳过")
+                else:
+                    sold_skipped.append(item_name)
+                    mfaalog.info(f"[Arbitrage] [{item_name}] 当前无可卖数量")
             else:
                 sold_fail.append(item_name)
                 mfaalog.warning(f"[Arbitrage] [{item_name}] 未全部确认售出，停止该物品；"
@@ -698,8 +703,13 @@ class ArbitrageSellController(CustomAction):
             mfaalog.info(f"[Arbitrage] 🎉 本轮实际售出 {len(sold_ok)} 项：{', '.join(sold_ok)}")
         elif sold_fail:
             mfaalog.warning("[Arbitrage] 本轮没有完整完成的物品，已确认成交量保留，详见逐项回报。")
-        elif sold_skipped:
-            mfaalog.info(f"[Arbitrage] 本轮{len(sold_skipped)}项无可卖数量")
+        elif sold_skipped or sold_locked:
+            parts = []
+            if sold_skipped:
+                parts.append(f"{len(sold_skipped)}项无可卖数量")
+            if sold_locked:
+                parts.append(f"{len(sold_locked)}项目标卡带尚未解锁，已跳过")
+            mfaalog.info(f"[Arbitrage] 本轮{'，'.join(parts)}")
         else:
             mfaalog.info(f"[Arbitrage] ➖ 本轮 {len(targets_to_sell)} 项待售,一项都未及处理(多半是收到停止指令)。")
         return True

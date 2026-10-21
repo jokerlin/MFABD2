@@ -18,9 +18,10 @@ _Locked 按入口锚点 PackSelect_Locked 退出（出售 HUB → BatchExit，�
 运行：python -B tools/verify_arbitrage_sell_locked_cart.py -v
 """
 
+from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
-import importlib.util
 import json
 import sys
 import tempfile
@@ -40,13 +41,13 @@ sys.path.insert(0, str(ROOT / "agent"))
 Library.version()
 from maa.agent.agent_server import AgentServer
 
-# 单独加载这一个文件：导入 action 包会连带注册全部识别器与 sink
-_spec = importlib.util.spec_from_file_location("clear_node_hit_count", ROOT / "agent/action/clear_node_hit_count.py")
-assert _spec and _spec.loader
-_module = importlib.util.module_from_spec(_spec)
-with patch.object(AgentServer, "custom_action", return_value=lambda cls: cls):
-    _spec.loader.exec_module(_module)
-ClearNodeHitCountAction = _module.ClearNodeHitCountAction
+with patch.object(AgentServer, "custom_action", return_value=lambda cls: cls), \
+     patch.object(AgentServer, "custom_recognition", return_value=lambda cls: cls), \
+     patch.object(AgentServer, "context_sink", return_value=lambda cls: cls), \
+     patch.object(AgentServer, "tasker_sink", return_value=lambda cls: cls), \
+     patch.object(AgentServer, "_set_api_properties"):
+    from action import arbitrage_sell_batch as dispatch
+    from action.clear_node_hit_count import ClearNodeHitCountAction
 
 from utils.arbitrage_cartridge import cartridge_expected
 
@@ -144,6 +145,62 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertNotIn(LOCKED_EXIT, names)
         self.assertNotIn(SELECTED, names)
 
+    def test_pack_list_resets_hit_count_across_rounds(self):
+        # 同一任务内连续两轮进入 PackList：首轮点满上限后，次轮计数从 0 开始，还能再点满上限
+        extra = {
+            ENTRY: {"next": ["[JumpBack]Verify_PackSelect_Round1", "Verify_PackSelect_Round2"]},
+            "Verify_PackSelect_Round1": {"max_hit": 1, "pre_delay": 0, "post_delay": 0, "next": [PACK_LIST]},
+            "Verify_PackSelect_Round2": {"pre_delay": 0, "post_delay": 0, "next": [PACK_LIST]},
+        }
+        if not HAS_OCR:
+            extra[SWITCH] = {"recognition": "DirectHit", "target": [260, 560, 10, 10]}
+        controller, names, failed, timed_out = self.select("活动游戏卡7", load("sell_list_locked.png"),
+                                                           extra=extra)
+        self.assertFalse(timed_out)
+        self.assertFalse(failed)
+        self.assertEqual(names.count(PACK_LIST), 2)
+        self.assertEqual(names.count(FALLBACK), 2)
+        split = names.index(FALLBACK)
+        self.assertEqual(names[:split].count(SWITCH), CLICKS_LIMIT)
+        self.assertEqual(names[split + 1:].count(SWITCH), CLICKS_LIMIT)
+        self.assertEqual(len(controller.clicks), CLICKS_LIMIT * 2)
+
+    def test_locked_cart_sale_batch_is_marked_skipped(self):
+        # 锁卡带从 Arbitrage_Sell_HUB 经 _Locked → BatchExit → BatchEnd 退出时，
+        # SaleBatch 记为 skipped、page_ok 为真，保留原有库存，不报失败
+        ui = SimpleNamespace(
+            tasker=SimpleNamespace(stopping=False),
+            clone=lambda: ui,
+            clear_hit_count=lambda name: True,
+            run_task=lambda entry, pipeline_override: SimpleNamespace(
+                status=SimpleNamespace(succeeded=True),
+                nodes=[
+                    SimpleNamespace(name=LOCKED, completed=True),
+                    SimpleNamespace(name=dispatch._END, completed=True),
+                ],
+            ),
+        )
+        with ExitStack() as mocks:
+            for name, value in (("sync_from_context", True), ("check_scope", None)):
+                mocks.enter_context(patch.object(dispatch, name, return_value=value))
+            mocks.enter_context(patch.object(dispatch.PersistentStore, "_current_account_id", "test"))
+            mocks.enter_context(patch.object(dispatch.store, "market_day", return_value="2026-10-21"))
+            saved = mocks.enter_context(patch.object(
+                dispatch.store, "set_inventory_quantities", return_value=True))
+            invalidated = mocks.enter_context(patch.object(
+                dispatch.store, "invalidate_inventory_quantities", return_value=True))
+            mocks.enter_context(patch.object(dispatch.gold_verify, "clear_verdict"))
+            result = dispatch.execute_sale_item(ui, "草药三明治", {}, reserve=0)
+        self.assertEqual(result["status"], "skipped")
+        self.assertTrue(result["page_ok"])
+        self.assertEqual(result["actual_quantity"], 0)
+        self.assertEqual(len(result["batches"]), 1)
+        self.assertEqual(result["batches"][0]["status"], "skipped")
+        self.assertEqual(result["batches"][0]["reason"], "目标卡带尚未解锁")
+        self.assertIsNone(result["batches"][0]["inventory_after"])
+        saved.assert_not_called()
+        invalidated.assert_not_called()
+
     def test_pipeline_shape(self):
         base = json.loads((BASE / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))
         pc = json.loads((PC / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))
@@ -166,11 +223,13 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertEqual(base["Arbitrage_PreciseBuy_PackEntry"]["anchor"]["PackSelect_Locked"],
                          "Arbitrage_PreciseBuy_NotFound")
         # PC 包只覆盖 roi，流程字段继承 base
+        self.assertIn(SWITCH, pc)
+        self.assertEqual(pc[SWITCH].get("roi"), [140, 85, 170, 610])
         for field in ("next", "max_hit", "on_error"):
-            self.assertNotIn(field, pc.get(SWITCH, {}))
+            self.assertNotIn(field, pc[SWITCH])
         self.assertNotIn(LOCKED, pc)
 
-    def select(self, cart, image, selectable=False):
+    def select(self, cart, image, selectable=False, extra=None):
         fixture = {
             # 代替 HUB / PreciseBuy 入口：只设两个锚点，然后走真实的 PackList → 选卡
             ENTRY: {"pre_delay": 0, "post_delay": 0, "next": [PACK_LIST],
@@ -178,9 +237,11 @@ class SellLockedCartTests(unittest.TestCase):
             SELECTED: {"pre_delay": 0, "post_delay": 0},
             LOCKED_EXIT: {"pre_delay": 0, "post_delay": 0},
             PACK_LIST: {"post_delay": 0},
-            SWITCH: {"expected": cartridge_expected(cart), "post_delay": 0, "rate_limit": 0},
+            SWITCH: {"expected": cartridge_expected(cart), "post_delay": 0, "rate_limit": 0, "timeout": 0},
             CLR: {"timeout": 0},
         }
+        for name, fields in (extra or {}).items():
+            fixture.setdefault(name, {}).update(fields)
         with tempfile.TemporaryDirectory(prefix="mfabd2-sell-locked-", ignore_cleanup_errors=True) as directory:
             Tasker.set_log_dir(directory)
             Tasker.set_stdout_level(LoggingLevelEnum.Off)

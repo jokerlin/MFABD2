@@ -51,6 +51,7 @@ with patch.object(AgentServer, "custom_action", return_value=lambda cls: cls), \
     from action.clear_node_hit_count import ClearNodeHitCountAction
 
 from utils.arbitrage_cartridge import cartridge_expected
+from utils.arbitrage_sale_state import LOCKED_REASON
 
 BASE = ROOT / "assets/resource/base"
 PC = ROOT / "assets/resource/pc"
@@ -216,7 +217,7 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertEqual(result["actual_quantity"], 0)
         self.assertEqual(len(result["batches"]), 1)
         self.assertEqual(result["batches"][0]["status"], "skipped")
-        self.assertEqual(result["batches"][0]["reason"], "目标卡带尚未解锁")
+        self.assertEqual(result["batches"][0]["reason"], LOCKED_REASON)
         self.assertIsNone(result["batches"][0]["inventory_after"])
         saved.assert_not_called()
         invalidated.assert_not_called()
@@ -225,6 +226,68 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertTrue(any("尚未解锁" in line for line in logs))
         self.assertFalse(any("当前无可卖数量" in line for line in logs))
         self.assertFalse(any("无可卖数量" in line for line in logs))
+
+    def test_mixed_sold_and_locked_summary_reports_both(self):
+        # 同一轮里既有正常售出的物品，又有未解锁卡带跳过的物品时，汇总行同时包含两类数量
+        ui = SimpleNamespace(
+            tasker=SimpleNamespace(stopping=False),
+            get_node_object=lambda name: SimpleNamespace(attach={}),
+        )
+        market = {
+            "complete": True,
+            "items": [
+                {
+                    "name": "烤蜂蜜苹果",
+                    "is_max_price": True,
+                    "target_cartridge": "活动游戏卡7",
+                    "cart_score": 1.0,
+                    "cart_conflict": False,
+                    "current_rate": 130,
+                    "cartridge_read_basis": "direct",
+                },
+                {
+                    "name": "草药三明治",
+                    "is_max_price": True,
+                    "target_cartridge": "剧情游戏卡17",
+                    "cart_score": 1.0,
+                    "cart_conflict": False,
+                    "current_rate": 130,
+                    "cartridge_read_basis": "direct",
+                },
+            ],
+        }
+        outcomes = {
+            "烤蜂蜜苹果": {
+                "status": "confirmed",
+                "actual_quantity": 10,
+                "batches": [{"status": "confirmed", "reason": ""}],
+                "page_ok": True,
+            },
+            "草药三明治": {
+                "status": "skipped",
+                "actual_quantity": 0,
+                "batches": [{"status": "skipped", "reason": LOCKED_REASON}],
+                "page_ok": True,
+            },
+        }
+        logs = []
+        with ExitStack() as mocks:
+            mocks.enter_context(patch.object(result_controller, "market_day", return_value="2026-10-21"))
+            mocks.enter_context(patch.object(result_controller, "get_market_snapshot", return_value=market))
+            mocks.enter_context(patch.object(
+                result_controller, "_load_recipe_names", return_value={"烤蜂蜜苹果", "草药三明治"}))
+            mocks.enter_context(patch.object(
+                result_controller, "execute_sale_item",
+                side_effect=lambda ctx, name, cfg, reserve=0: outcomes[name]))
+            mocks.enter_context(patch.object(result_controller.mfaalog, "info", side_effect=logs.append))
+            self.assertTrue(result_controller.ArbitrageSellController()._run(ui, {"mode": "sell"}))
+        summary = logs[-1]
+        self.assertEqual(
+            summary,
+            "[Arbitrage] 本轮实际售出 1 项：烤蜂蜜苹果，1项目标卡带尚未解锁，已跳过",
+        )
+        self.assertIn("实际售出 1 项", summary)
+        self.assertIn("1项目标卡带尚未解锁，已跳过", summary)
 
     def test_pipeline_shape(self):
         base = json.loads((BASE / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))

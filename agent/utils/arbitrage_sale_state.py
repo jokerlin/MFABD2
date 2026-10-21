@@ -3,6 +3,9 @@
 from dataclasses import dataclass, field
 
 
+LOCKED_REASON = "目标卡带尚未解锁"
+
+
 def integer(value, label):
     if type(value) is not int or value < 0:
         raise ValueError(f"{label}必须是非负整数")
@@ -90,7 +93,7 @@ class SaleBatch:
         if self.status != "new":
             raise ValueError("当前状态不允许标记卡带未解锁")
         self.status = "skipped"
-        self.reason = "目标卡带尚未解锁"
+        self.reason = LOCKED_REASON
 
     def fail(self, reason):
         self.reason = str(reason)

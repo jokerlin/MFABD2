@@ -314,8 +314,8 @@
         "action": "Click",
         "post_delay": 30000,
         "next": [
-            "StartGame_Update_Data_DownLoading",
             "StartGame_GameIsMaint",
+            "StartGame_Update_Data_DownLoading",
             "StartGame_Loading",
             "StartGame_TouchStart"
         ],
@@ -339,9 +339,9 @@
         "post_delay": 30000,
         "timeout": 8000,
         "next": [
-            "[JumpBack]StartGame_Update_Data_DownLoading",
             "[JumpBack]StartGame_PayFailed",
             "StartGame_GameIsMaint",
+            "[JumpBack]StartGame_Update_Data_DownLoading",
             "StartGame_Loading",
             "StartGame_TouchStart"
         ],

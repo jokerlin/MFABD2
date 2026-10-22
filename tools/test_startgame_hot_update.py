@@ -52,7 +52,12 @@ class HotUpdateTransitions(unittest.TestCase):
             following = self.nodes[entry]['next']
             self.assertIn('StartGame_GameIsMaint', following, entry)
             maint_idx = following.index('StartGame_GameIsMaint')
-            for bg_node in ('StartGame_Loading', 'StartGame_LoadingPage'):
+            for bg_node in (
+                'StartGame_Update_Data_DownLoading',
+                '[JumpBack]StartGame_Update_Data_DownLoading',
+                'StartGame_Loading',
+                'StartGame_LoadingPage',
+            ):
                 if bg_node in following:
                     self.assertLess(maint_idx, following.index(bg_node), f'{entry}: {bg_node}')
 
@@ -73,7 +78,7 @@ class HotUpdateTransitions(unittest.TestCase):
         self.assertEqual('StopTask', maint['action'])
         self.assertEqual(['游戏服务器维护中'], maint['focus']['start'])
         self.assertEqual(['游戏服务器维护中'], maint['focus']['toast'])
-        self.assertTrue(maint['focus']['aborted'])
+        self.assertIs(maint['focus']['aborted'], True)
         matches = lambda patterns, text: any(re.search(p, text) for p in patterns)
         for text in ('将于 10月22日（四）进行定期维护和更新。', '维护影响：将无法登入及使用游戏'):
             self.assertTrue(matches(maint['expected'], text), text)

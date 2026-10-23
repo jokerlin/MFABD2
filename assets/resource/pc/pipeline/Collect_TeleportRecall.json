@@ -15,6 +15,31 @@
             3
         ]
     },
+    "Collect_ForceTelepor_SelectNormal": {
+        "desc": "PC技能卡等级到名称的反向点击偏移，沿用砍价练习的35像素纵向间距。",
+        "target_offset": [
+            0,
+            -35,
+            0,
+            0
+        ]
+    },
+    "Rec_<Collect_ForceTelepor_SelectNormal>_Name": {
+        "roi": [
+            80,
+            604,
+            1120,
+            30
+        ]
+    },
+    "Rec_<Collect_ForceTelepor_SelectNormal>_Rank": {
+        "roi_offset": [
+            -10,
+            35,
+            21,
+            27
+        ]
+    },
     "Collect_ForceTeleporCircle_Ico": {
         "recognition": "Or",
         "any_of": [

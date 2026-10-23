@@ -590,9 +590,13 @@ class ArbitrageSellController(CustomAction):
         # 3. 派发阶段：循环注入并执行售卖节点链
         # ==========================================
         if not targets_to_sell:
-            if not scan.get("prices_complete", True) or not scan.get("names_complete", True):
-                mfaalog.warning("[Arbitrage] 仍有未确认商品或金额，不能认定今日没有峰值目标")
+            if not scan.get("prices_complete", True):
+                mfaalog.warning("[Arbitrage] 仍有未确认金额，不能认定今日没有峰值目标")
                 return False
+            # 名称未确认的行本就进不了出售目标；最坏是漏卖读歪的那件，不会卖错，提示后照常收工
+            if not scan.get("names_complete", True):
+                mfaalog.warning(f"[Arbitrage] 有未确认商品名已跳过，未据此出售："
+                                f"{', '.join(scan.get('unconfirmed_names') or [])}")
             mfaalog.info("[Arbitrage] 💤 今日无符合条件的最高价商品，收工！")
             return True
 
@@ -820,9 +824,11 @@ class ArbitrageSellController(CustomAction):
             unresolved = [item["name"] for item in scan["items"] if bad(item.get(field))]
             scan[quality + "_complete"] = not unresolved
             scan["unconfirmed_" + quality] = unresolved
-            if unresolved:
-                label = "商品名" if quality == "names" else "金额"
-                mfaalog.warning(f"[Arbitrage] 价目表{label}未确认{len(unresolved)}项：{', '.join(unresolved)}")
+            if unresolved and quality == "names":
+                mfaalog.warning(f"[Arbitrage] ⚠️ 价目表有{len(unresolved)}个商品名未能确认，已跳过、不影响其余商品："
+                                f"{', '.join(unresolved)}（若是新物品，请反馈以补充名称表）")
+            elif unresolved:
+                mfaalog.warning(f"[Arbitrage] 价目表金额未确认{len(unresolved)}项：{', '.join(unresolved)}")
         if missing:
             mfaalog.warning(f"[Arbitrage] 价目表覆盖完成={scan['complete']}，卡带未确认{len(missing)}项：{', '.join(missing)}")
         return scan

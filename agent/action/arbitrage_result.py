@@ -685,6 +685,8 @@ class ArbitrageSellController(CustomAction):
                 sold_ok.append(item_name)
             elif outcome and outcome["status"] == "skipped":
                 reason = (outcome.get("batches") or [{}])[-1].get("reason")
+                if outcome["actual_quantity"] > 0:
+                    sold_ok.append(item_name)
                 if reason == LOCKED_REASON:
                     sold_locked.append(item_name)
                     mfaalog.info(f"[Arbitrage] [{item_name}] {LOCKED_REASON}，已跳过")  # noqa: RUF001

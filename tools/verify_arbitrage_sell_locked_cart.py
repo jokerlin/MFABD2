@@ -289,6 +289,30 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertIn("实际售出 1 项", summary)
         self.assertIn("1项目标卡带尚未解锁，已跳过", summary)
 
+    def test_partial_sale_then_skip_is_counted_in_summary(self):
+        ui = SimpleNamespace(tasker=SimpleNamespace(stopping=False),
+                             get_node_object=lambda name: SimpleNamespace(attach={}))
+        market = {"complete": True, "items": [{
+            "name": "草药三明治", "is_max_price": True,
+            "target_cartridge": "剧情游戏卡17", "cart_score": 1.0,
+            "cart_conflict": False, "current_rate": 130,
+            "cartridge_read_basis": "direct",
+        }]}
+        for reason, ending in ((LOCKED_REASON, "1项目标卡带尚未解锁，已跳过"),
+                               ("", "1项无可卖数量")):
+            with self.subTest(reason=reason), ExitStack() as mocks:
+                logs = []
+                outcome = {"status": "skipped", "actual_quantity": 10, "page_ok": True,
+                           "batches": [{"status": "confirmed", "actual_quantity": 10},
+                                       {"status": "skipped", "actual_quantity": 0, "reason": reason}]}
+                mocks.enter_context(patch.object(result_controller, "market_day", return_value="2026-10-21"))
+                mocks.enter_context(patch.object(result_controller, "get_market_snapshot", return_value=market))
+                mocks.enter_context(patch.object(result_controller, "_load_recipe_names", return_value={"草药三明治"}))
+                mocks.enter_context(patch.object(result_controller, "execute_sale_item", return_value=outcome))
+                mocks.enter_context(patch.object(result_controller.mfaalog, "info", side_effect=logs.append))
+                self.assertTrue(result_controller.ArbitrageSellController()._run(ui, {"mode": "sell"}))
+                self.assertEqual(logs[-1], f"[Arbitrage] 本轮实际售出 1 项：草药三明治，{ending}")
+
     def test_pipeline_shape(self):
         base = json.loads((BASE / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))
         pc = json.loads((PC / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))

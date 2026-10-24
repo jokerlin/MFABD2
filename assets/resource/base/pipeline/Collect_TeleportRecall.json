@@ -185,7 +185,8 @@
             55
         ],
         "expected": [
-            "传说"
+            "传说",
+            "傳說"
         ],
         "pre_delay": 0,
         "action": "Custom",
@@ -268,7 +269,8 @@
             33
         ],
         "expected": [
-            "生成魔法阵"
+            "生成魔法阵",
+            "創建魔法陣"
         ]
     },
     "Rec_<Collect_ForceTelepor_SelectNormal>_Rank": {

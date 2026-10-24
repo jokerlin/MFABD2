@@ -33,6 +33,7 @@ from utils.arbitrage_price_grid import (
     stacked_rates as _stacked_rates,
 )
 from utils.arbitrage_material_policy import read_material_reserve_policy
+from utils.arbitrage_market_log import export_market_log
 from utils.arbitrage_cartridge import (
     DEFAULT_CONFIG as _RESCUE_CFG,
     RESCUE_NODE as _RESCUE_NODE,
@@ -418,7 +419,9 @@ class ArbitrageSellController(CustomAction):
         if selling and not context.set_anchor("Replenish_ShopEntry", "Arbitrage_Merchant_NoDiscount_Entry"):
             mfaalog.error("[Arbitrage] 出售进店入口设置失败")
             return False
+        export_market_log("before", mode)  # 临时收集行情，整块可删(见 arbitrage_market_log.py)
         completed = self._run(context, params)
+        export_market_log("after", mode)
         # 整轮出售正常收尾才清锚；公共行情、子流程、失败及停止均保留选路。
         if completed and selling and not context.tasker.stopping:
             if not context.set_anchor("Replenish_ShopEntry", ""):

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agent"))
 
 from utils import arbitrage_store as store
+from utils import arbitrage_market_log as market_log
 from utils.arbitrage_replenish_plan import _market_prices
 from utils.persistent_store import PersistentStore as RealAccountStore
 from utils.persistent_store import SharedStore as RealSharedStore
@@ -302,9 +303,35 @@ class SharedFileTests(unittest.TestCase):
                 setattr(RealSharedStore, name, value)
 
 
+class MarketLogTests(unittest.TestCase):
+    """行情副本只做原样覆盖复制；存档缺失时不创建任何文件。"""
+
+    def export(self, source, debug):
+        with patch.object(RealSharedStore, "_init_paths"), \
+             patch.object(RealSharedStore, "FILE_PATH", source), \
+             patch.object(market_log, "debug_dir", return_value=debug):
+            market_log.export_market_log("after", "preview_all")
+
+    def test_shared_file_is_copied_over_the_previous_copy(self):
+        with tempfile.TemporaryDirectory(prefix="mfabd2-market-log-") as temp:
+            source, debug = Path(temp) / "agent_shared_data.json", Path(temp) / "debug"
+            for body in ('{"day": 1}', '{"day": 2}'):
+                source.write_text(body, encoding="utf-8")
+                self.export(source, debug)
+            self.assertEqual((debug / market_log.LOG_NAME).read_text(encoding="utf-8"), '{"day": 2}')
+            self.assertEqual([p.name for p in debug.iterdir()], [market_log.LOG_NAME])
+
+    def test_missing_shared_file_creates_nothing(self):
+        with tempfile.TemporaryDirectory(prefix="mfabd2-market-log-") as temp:
+            source = Path(temp) / "agent_shared_data.json"
+            self.export(source, Path(temp) / "debug")
+            self.assertEqual(list(Path(temp).iterdir()), [])
+
+
 if __name__ == "__main__":
     suite = unittest.TestSuite()
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(ArbitrageStoreTests))
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(SharedFileTests))
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(MarketLogTests))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)

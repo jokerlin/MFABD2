@@ -30,6 +30,7 @@ from utils.arbitrage_price_grid import (
     in_cell as _in_cell,
     join_cell as _join_cell,
     load_patterns as _load_label_patterns,
+    stacked_rates as _stacked_rates,
 )
 from utils.arbitrage_material_policy import read_material_reserve_policy
 from utils.arbitrage_cartridge import (
@@ -253,6 +254,15 @@ def _cart_cells(carts, top, split_y, bottom, column_roi):
 def _current_cart(dets, context, screenshot, cfg, bounds, label):
     """Compatibility entry for standalone cartridge checks."""
     return _read_cartridge(dets, context, screenshot, cfg, bounds, label)[:3]
+
+
+def _scan_key(item):
+    """Dedup and repeated-page key. An unconfirmed name may be a placeholder or another item's
+    name, so that row is told apart by its own reads instead."""
+    if item.get("name_confirmed", True):
+        return canon(item["name"])
+    return ("?", item.get("raw_name") or "", item.get("current_price"), item.get("current_rate"),
+            item.get("peak_price"), item.get("peak_rate"))
 
 
 def _merge_cartridge_observation(saved, fresh):
@@ -719,21 +729,22 @@ class ArbitrageSellController(CustomAction):
 
             mfaalog.info(f"[Arbitrage] 📷 正在扫描第 {page_count} 页价目表...")
             try:
-                page_results = self._parse_current_page(context)
+                page_results, problem = self._read_page(context)
             except Exception as exc:
                 scan["termination_reason"] = "parse_exception"
                 mfaalog.error(f"[Arbitrage] ❌ 第 {page_count} 页解析异常({exc})，结束扫描")
                 break
             scan["pages_scanned"] = page_count
-            if not page_results:
-                scan["termination_reason"] = "parse_empty"
-                mfaalog.warning("[Arbitrage] ⚠️ 识别失败或页面无商品，结束扫描。")
+            if problem:
+                # 本页读不成立时不能据此判到底，整次扫描记为不完整，行情不会被当作可用存档
+                scan["termination_reason"] = "names_unreadable" if problem == "names_unreadable" else "parse_empty"
+                mfaalog.warning(f"[Arbitrage] ⚠️ 第 {page_count} 页重拍后仍读不成立({problem})，结束扫描，本次行情记为不完整。")
                 break
 
-            page_key = frozenset(canon(item["name"]) for item in page_results)
+            page_key = frozenset(_scan_key(item) for item in page_results)
             # The last repeated page may contain the first usable read of an item.
             for item in page_results:
-                previous = seen_items.get(canon(item["name"]))
+                previous = seen_items.get(_scan_key(item))
                 if previous is not None:
                     _merge_cartridge_observation(previous, item)
             if prev_page_key is not None and page_key == prev_page_key:
@@ -769,7 +780,7 @@ class ArbitrageSellController(CustomAction):
                 if isinstance(rate, int) and not isinstance(rate, bool):
                     lowest = scan["lowest_observed_rate"]
                     scan["lowest_observed_rate"] = rate if lowest is None else min(lowest, rate)
-                item_key = canon(name)
+                item_key = _scan_key(item)
                 if item_key not in seen_items:
                     if stop_below_rate is not None and boundary_safe:
                         if last_new_rate is not None and rate > last_new_rate:
@@ -833,6 +844,20 @@ class ArbitrageSellController(CustomAction):
             mfaalog.warning(f"[Arbitrage] 价目表覆盖完成={scan['complete']}，卡带未确认{len(missing)}项：{', '.join(missing)}")
         return scan
 
+    def _read_page(self, context: Context) -> tuple[list, str | None]:
+        """读一页；读不成立时重拍一次，偶发的误读与未停稳不至于结束整次扫描。"""
+        for attempt in (1, 2):
+            self._page_problem = None
+            results = self._parse_current_page(context)
+            if results and not any(item.get("name_confirmed", True) for item in results):
+                # 整页没有一个确认的名字，多半是名称列整片失灵，占位名不能拿来判同页
+                self._page_problem = "names_unreadable"
+            elif results:
+                return results, None
+            if attempt == 1:
+                mfaalog.info(f"[Arbitrage] 本页读不成立({self._page_problem or 'empty'})，重拍一次")
+        return [], self._page_problem or "empty"
+
     # ==========================================
     # 附：V8 图像解析引擎
     # ==========================================
@@ -842,6 +867,7 @@ class ArbitrageSellController(CustomAction):
         # 防御:截图失败则安全退出当前页解析
         if screenshot is None:
             print("[Arbitrage] ❌ 严重错误: 底层截图获取失败 (返回 None)！跳过当前页解析。")
+            self._page_problem = "screencap_none"
             return []
 
         # run 起始已按本轮 attach 取好副本；单测/直调本方法时回落只读默认表。
@@ -870,10 +896,13 @@ class ArbitrageSellController(CustomAction):
         _, list_top, _, list_height = context.get_node_object(_COL_LABEL).recognition.param.roi
 
         rows, problem = _draw_price_rows(labels, list_top, list_top + list_height, _load_label_patterns(context))
+        if not problem:
+            problem = _stacked_rates(rows, [d for d in prices if RE_PCT.search(d["text"])])
         if problem:
-            # 标签结构不成立就不猜：整页不出结果，由扫描侧记为未完整
+            # 分行不成立就不猜：整页不出结果，由扫描侧重拍一次，仍不成立记为未完整
+            self._page_problem = problem
             if labels or names:
-                mfaalog.warning(f"[Arbitrage] ⚠️ 价目表标签不成行({problem})，本页不解析："
+                mfaalog.warning(f"[Arbitrage] ⚠️ 价目表分行不成立({problem})，本页不解析："
                                 f"{[t['text'] for t in sorted(labels, key=lambda t: t['cy'])]}")
             return []
         for t in names:

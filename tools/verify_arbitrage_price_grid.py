@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
@@ -157,6 +158,63 @@ class ParserTests(unittest.TestCase):
         # 上格完整，今天的卡带照读；被截断的月度卡带不采信
         self.assertEqual(rows[1]["target_cartridge"], "剧情游戏卡14")
         self.assertEqual(rows[1]["monthly_cartridge"], "")
+
+    def test_full_page_of_evenly_spaced_rows_passes_the_checks(self):
+        rows = parse(page([det("大蒜", 478, 236, 44, 23), det("兽肉", 478, 324, 40, 23),
+                           det("马铃薯", 478, 412, 60, 23)], rows=[(240, 280), (328, 368), (416, 456)]))
+        self.assertEqual([r["name"] for r in rows], ["大蒜", "兽肉", "马铃薯"])
+
+    def test_item_whose_two_labels_were_both_missed_stops_the_page(self):
+        # 中间那件：上一行下格高出一整件
+        labels = [label("当前", 240), label("每月6日", 280), label("当前", 416), label("每月9日", 456)]
+        self.assertEqual(grid.draw_rows(labels, 209, 553, PATTERNS), ([], "uneven_cells:1"))
+        # 表头下的第一件：格高差不足一倍，由同一格里的两排倍率查出
+        controller = ar.ArbitrageSellController()
+        columns = page([det("大蒜", 478, 236, 44, 23), det("兽肉", 478, 324, 40, 23)],
+                       rows=[(240, 280), (328, 368)],
+                       label_boxes=[label("最高价", 210, 21), label("当前", 328), label("每月9日", 368)])
+        self.assertEqual(controller._parse_current_page(PriceReader(columns)), [])
+        self.assertEqual(controller._page_problem, "rates_stacked:1")
+
+
+def row(name, confirmed=True, price=5):
+    return {"name": name, "name_confirmed": confirmed, "raw_name": "" if not confirmed else name,
+            "is_max_price": False, "current_rate": 100, "current_price": price, "peak_price": 6,
+            "peak_rate": 120, "target_cartridge": "剧情游戏卡2"}
+
+
+def scan(pages):
+    controller = ar.ArbitrageSellController()
+    ctx = NS(tasker=NS(stopping=False), run_task=lambda _: NS(status=NS(succeeded=True)))
+    with patch.object(controller, "_parse_current_page", side_effect=pages) as read:
+        result = controller._scan_price_list(ctx, 5, False)
+    return result, read.call_count
+
+
+class ScanGuardTests(unittest.TestCase):
+    def test_page_without_any_confirmed_name_cannot_declare_the_end(self):
+        unread = [row("未读出名称@229", False), row("未读出名称@317", False, 7)]
+        result, reads = scan([unread, unread])
+        self.assertEqual(reads, 2)
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["termination_reason"], "names_unreadable")
+
+    def test_broken_page_is_shot_again_once(self):
+        result, reads = scan([[], [row("兽肉")], [row("兽肉")]])
+        self.assertEqual(reads, 3)
+        self.assertTrue(result["complete"])
+        result, _ = scan([[], []])
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["termination_reason"], "parse_empty")
+
+    def test_unconfirmed_guess_never_merges_into_the_real_item_of_that_name(self):
+        later = [row("兽肉", False, 9), row("大蒜")]
+        result, _ = scan([[row("兽肉")], later, later])
+        self.assertEqual(result["termination_reason"], "repeated_page")
+        real = [r for r in result["items"] if r["name_confirmed"]]
+        self.assertEqual([(r["name"], r["current_price"]) for r in real], [("兽肉", 5), ("大蒜", 5)])
+        self.assertNotIn("price_read_basis", real[0])
+        self.assertEqual(result["unconfirmed_names"], ["兽肉"])
 
 
 if __name__ == "__main__":

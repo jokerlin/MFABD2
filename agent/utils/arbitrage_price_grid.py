@@ -76,7 +76,25 @@ def draw_rows(labels, top, bottom, patterns):
         row.setdefault("upper_end", row["mid"])
         if not row["top"] < row["upper_end"] <= row["bottom"]:
             return [], f"bad_geometry:{k + 1}"
+    # 一件商品的两个标签同时漏读时，它会被并进相邻一行，那一格就比另一格高出一整件
+    for k, row in enumerate(rows[:-1]):
+        upper, lower = row["mid"] - row["top"], row["bottom"] - row["mid"]
+        if max(upper, lower) > 2 * min(upper, lower):
+            return [], f"uneven_cells:{k + 1}"
     return rows, None
+
+
+def stacked_rates(rows, rates):
+    """Each cell holds one rate line; two lines in one cell mean an item lost both labels."""
+    for k, row in enumerate(rows, 1):
+        cells = [(row["top"], row["upper_end"])]
+        if row["mid"] is not None:
+            cells.append((row["mid"], row["bottom"]))
+        for low, high in cells:
+            ys = [d["cy"] for d in in_cell(rates, low, high)]
+            if ys and max(ys) - min(ys) > row["current"]["h"]:
+                return f"rates_stacked:{k}"
+    return None
 
 
 def in_cell(dets, low, high):

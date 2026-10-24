@@ -302,13 +302,13 @@ class CartridgeRescueTests(unittest.TestCase):
         original = {"untouched": {"gold_fact": 123}, "arbitrage": {"market": {"days": {"today": {
             "complete": True, "parser_version": 6, "items": [{"name": "咖啡豆", "target_cartridge": "剧情游戏卡3"}]}}}}}
         data = deepcopy(original)
-        self.assertEqual(store.MARKET_PARSER_VERSION, 7)
+        self.assertGreater(store.MARKET_PARSER_VERSION, 6)
         with patch.object(store.SharedStore, "load", return_value=data), \
              patch.object(store.SharedStore, "save", return_value=True) as save:
             self.assertIsNone(store.get_market_snapshot("today"))
             store.save_market_snapshot({"complete": False, "items": []}, "today")
             self.assertIsNone(store.get_market_snapshot("today"))
-            self.assertEqual(data["arbitrage"]["market"]["days"]["today"]["parser_version"], 7)
+            self.assertEqual(data["arbitrage"]["market"]["days"]["today"]["parser_version"], store.MARKET_PARSER_VERSION)
             self.assertEqual(data["untouched"], original["untouched"])
             save.assert_called_once()
 

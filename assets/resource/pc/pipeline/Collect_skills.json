@@ -139,10 +139,10 @@
                 "sub_name": "ColorMatch",
                 "recognition": "ColorMatch",
                 "roi": [
-                    985,
-                    555,
-                    72,
-                    69
+                    1009,
+                    583,
+                    5,
+                    11
                 ],
                 "lower": [
                     [

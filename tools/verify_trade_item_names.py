@@ -158,7 +158,17 @@ class ItemWiringTests(unittest.TestCase):
                     self.assertTrue(result["confirmed"])
                     self.assertEqual(result["name"], item["cn"])
                     self.assertEqual(result["basis"], "exact")
-        self.assertEqual(names.resolve_ocr_name("高級契約書")["name"], "高级招募契约书")
+        recorded = {
+            "一般契約書": "普通招募契约书",
+            "高級契約書": "高级招募契约书",
+            "最高級契約書": "顶级招募契约书",
+            "黃色史萊姆": "黄色史莱姆",
+            "藍色史萊姆": "蓝色史莱姆",
+            "紅色史萊姆": "红色史莱姆",
+        }
+        for raw, expected in recorded.items():
+            with self.subTest(recorded=raw):
+                self.assertEqual(names.resolve_ocr_name(raw)["name"], expected)
 
     def test_incomplete_supplementary_aliases_cannot_guess_tier_or_color(self):
         for raw in ("頂級契約書", "中級契約書", "绿色史莱姆", "高级招募契约本"):

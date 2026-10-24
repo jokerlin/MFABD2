@@ -74,6 +74,7 @@ _SELL_QUANTITY = "Arbitrage_Sell_Item_Quantity"
 RE_PCT = re.compile(r'(\d{2,3})\s*%')
 RE_MONEY = re.compile(r'(?:[0-9]+|[0-9]{1,3}(?P<sep>[,.])[0-9]{3}(?:(?P=sep)[0-9]{3})*)')
 SCORE_MIN = 0.6      # 卡带选中组组分低于此=低置信,打WRN(实录错读曾得0.51,正确读数更高,#B)
+PAGE_NUDGES = 2      # 每次扫描最多几页可以原地微调位置后重读；超出即以不完整结束,不从头重扫
 
 
 # 卖出验证(2026-08-06 改)：金币不再由主控在派发前后自测,改由链内 A/B 两个动作节点测量,
@@ -705,6 +706,7 @@ class ArbitrageSellController(CustomAction):
         prev_page_key = None
         page_count = 1
         boundary_safe = stop_below_rate is not None
+        nudges_left = PAGE_NUDGES
         last_new_rate = None
 
         def disable_rate_boundary(reason: str) -> None:
@@ -729,7 +731,8 @@ class ArbitrageSellController(CustomAction):
 
             mfaalog.info(f"[Arbitrage] 📷 正在扫描第 {page_count} 页价目表...")
             try:
-                page_results, problem = self._read_page(context)
+                page_results, problem, nudged = self._read_page(context, nudge=nudges_left > 0)
+                nudges_left -= nudged
             except Exception as exc:
                 scan["termination_reason"] = "parse_exception"
                 mfaalog.error(f"[Arbitrage] ❌ 第 {page_count} 页解析异常({exc})，结束扫描")
@@ -738,7 +741,7 @@ class ArbitrageSellController(CustomAction):
             if problem:
                 # 本页读不成立时不能据此判到底，整次扫描记为不完整，行情不会被当作可用存档
                 scan["termination_reason"] = "names_unreadable" if problem == "names_unreadable" else "parse_empty"
-                mfaalog.warning(f"[Arbitrage] ⚠️ 第 {page_count} 页重拍后仍读不成立({problem})，结束扫描，本次行情记为不完整。")
+                mfaalog.warning(f"[Arbitrage] ⚠️ 第 {page_count} 页重读后仍不成立({problem})，结束扫描，本次行情记为不完整。")
                 break
 
             page_key = frozenset(_scan_key(item) for item in page_results)
@@ -844,19 +847,31 @@ class ArbitrageSellController(CustomAction):
             mfaalog.warning(f"[Arbitrage] 价目表覆盖完成={scan['complete']}，卡带未确认{len(missing)}项：{', '.join(missing)}")
         return scan
 
-    def _read_page(self, context: Context) -> tuple[list, str | None]:
-        """读一页；读不成立时重拍一次，偶发的误读与未停稳不至于结束整次扫描。"""
-        for attempt in (1, 2):
+    def _read_page(self, context: Context, nudge: bool = False) -> tuple[list, str | None, bool]:
+        """读一页；读不成立先重拍，仍不成立且还有额度时原地微调位置再读一次。
+
+        偶发误读与未停稳靠重拍消化，半行错位靠微调消化；都不从头重扫，代价最多一次微调。
+        返回 (结果, 问题, 是否用掉了一次微调)。
+        """
+        steps = ("read", "reshoot", "nudge") if nudge else ("read", "reshoot")
+        for step in steps:
+            if step == "nudge":
+                if context.tasker.stopping:
+                    break
+                detail = context.run_task("Arbitrage_Swip_Calibration_Hub")
+                if detail is None:
+                    mfaalog.warning("[Arbitrage] 价目表位置微调未能启动，仍按当前画面重读")
             self._page_problem = None
             results = self._parse_current_page(context)
             if results and not any(item.get("name_confirmed", True) for item in results):
                 # 整页没有一个确认的名字，多半是名称列整片失灵，占位名不能拿来判同页
                 self._page_problem = "names_unreadable"
             elif results:
-                return results, None
-            if attempt == 1:
-                mfaalog.info(f"[Arbitrage] 本页读不成立({self._page_problem or 'empty'})，重拍一次")
-        return [], self._page_problem or "empty"
+                return results, None, step == "nudge"
+            if step != steps[-1]:
+                follow = "重拍一次" if step == "read" else "微调位置后重读"
+                mfaalog.info(f"[Arbitrage] 本页读不成立({self._page_problem or 'empty'})，{follow}")
+        return [], self._page_problem or "empty", nudge and not context.tasker.stopping
 
     # ==========================================
     # 附：V8 图像解析引擎

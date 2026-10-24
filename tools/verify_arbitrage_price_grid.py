@@ -183,9 +183,11 @@ def row(name, confirmed=True, price=5):
             "peak_rate": 120, "target_cartridge": "剧情游戏卡2"}
 
 
-def scan(pages):
+def scan(pages, tasks=None):
     controller = ar.ArbitrageSellController()
-    ctx = NS(tasker=NS(stopping=False), run_task=lambda _: NS(status=NS(succeeded=True)))
+    tasks = [] if tasks is None else tasks
+    ctx = NS(tasker=NS(stopping=False),
+             run_task=lambda node: tasks.append(node) or NS(status=NS(succeeded=True)))
     with patch.object(controller, "_parse_current_page", side_effect=pages) as read:
         result = controller._scan_price_list(ctx, 5, False)
     return result, read.call_count
@@ -194,16 +196,32 @@ def scan(pages):
 class ScanGuardTests(unittest.TestCase):
     def test_page_without_any_confirmed_name_cannot_declare_the_end(self):
         unread = [row("未读出名称@229", False), row("未读出名称@317", False, 7)]
-        result, reads = scan([unread, unread])
-        self.assertEqual(reads, 2)
+        result, reads = scan([unread, unread, unread])
+        self.assertEqual(reads, 3)
         self.assertFalse(result["complete"])
         self.assertEqual(result["termination_reason"], "names_unreadable")
 
     def test_broken_page_is_shot_again_once(self):
-        result, reads = scan([[], [row("兽肉")], [row("兽肉")]])
+        tasks = []
+        result, reads = scan([[], [row("兽肉")], [row("兽肉")]], tasks)
         self.assertEqual(reads, 3)
         self.assertTrue(result["complete"])
-        result, _ = scan([[], []])
+        self.assertNotIn("Arbitrage_Swip_Calibration_Hub", tasks)
+
+    def test_page_still_broken_after_reshoot_is_nudged_in_place_then_read_again(self):
+        tasks = []
+        result, reads = scan([[], [], [row("兽肉")], [row("兽肉")]], tasks)
+        self.assertEqual(reads, 4)
+        self.assertTrue(result["complete"])
+        self.assertEqual(tasks[0], "Arbitrage_Swip_Calibration_Hub")
+
+    def test_nudges_are_limited_per_scan_and_never_restart_from_the_top(self):
+        pages = [[], [], [row("兽肉")]] * ar.PAGE_NUDGES + [[], []]
+        pages[2 + 3] = [row("大蒜")]
+        tasks = []
+        result, reads = scan(pages, tasks)
+        self.assertEqual(reads, len(pages))
+        self.assertEqual(tasks.count("Arbitrage_Swip_Calibration_Hub"), ar.PAGE_NUDGES)
         self.assertFalse(result["complete"])
         self.assertEqual(result["termination_reason"], "parse_empty")
 

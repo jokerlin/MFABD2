@@ -691,7 +691,30 @@
             "card_name": "SetSkill",
             "cycle_type": "g_daily"
         },
+        "next": [
+            "Setup_SkillScan_Success_Patch"
+        ],
         "focus": "Set.全技能检查通过~"
+    },
+    "Setup_SkillScan_Success_Patch": {
+        "desc": "[旁作用]全技能检查通过 ⇒ 本 task 内技能栏位不会是空的，关掉吸取技能组三个「未设置」候选（Collect_Skill3_1/3_2/3_3_Nothing），各栏分流少认一次模板。补丁只在本 task 生效；当天已检查过（Setup_Skill_Swich 不放行）或前置助手关闭时走不到这里，候选保持开启。",
+        "pre_delay": 0,
+        "action": "Custom",
+        "custom_action": "PatchPipeline",
+        "custom_action_param": {
+            "patches": {
+                "Collect_Skill3_1_Nothing": {
+                    "enabled": false
+                },
+                "Collect_Skill3_2_Nothing": {
+                    "enabled": false
+                },
+                "Collect_Skill3_3_Nothing": {
+                    "enabled": false
+                }
+            }
+        },
+        "post_delay": 0
     },
     "Setup_Scan_Error_PreVerdict": {
         "max_hit": 1,

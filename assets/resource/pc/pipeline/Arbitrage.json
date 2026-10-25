@@ -811,6 +811,15 @@
             288
         ]
     },
+    "Arbitrage_Sell_Col_Label": {
+        "desc": "PC当前／每月标签列；右缘避开金额前的金币，纵向排除表头和底部开关。",
+        "roi": [
+            714,
+            234,
+            70,
+            288
+        ]
+    },
     "Arbitrage_Sell_Col_Amount": {
         "roi": [
             790,

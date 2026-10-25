@@ -377,6 +377,9 @@ def _possession_scan_plan(snapshot: dict | None, recipe_names: set[str]) -> dict
     for item in snapshot.get("items") or []:
         if not isinstance(item, dict) or not item.get("is_max_price"):
             continue
+        if not item.get("name_confirmed", True):
+            # 峰值行的名字没认出来，无法判断它是不是料理，不能据此跳过持有物扫描。
+            return unavailable
         name = canon(str(item.get("name") or "").strip())
         if name not in recipe_names:
             continue

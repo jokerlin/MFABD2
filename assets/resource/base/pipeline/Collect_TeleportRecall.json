@@ -153,7 +153,7 @@
         "focus": "CFB.传送技能亮-尝试"
     },
     "Collect_ForceTelepor_MapCk": {
-        "desc": "传送技能打开移动魔法阵面板后，清零本轮补传送、左翻和传说右翻次数 | 标题为传说且本轮还没改选过时，经技能列表改用其他角色的非传说传送；其余翻到最左页选传送阵，传说面板最左页没有阵时交LegendaryScan往右找。等不到翻页或传送阵候选时关面板转步行；点阵后等不到「生成」由后续节点按自身失败路径处理。",
+        "desc": "传送技能打开移动魔法阵面板后，清零本轮补传送、左翻和传说右翻次数 | 标题为传说且本轮还没改选过时，经技能列表改用其他角色的非传说传送；本轮已改选过的传说面板由LegendaryLift翻到最左页再选阵，最左页没有阵交LegendaryScan往右找。非传说面板只有一张图，直接点阵、不左翻（左箭头模板在非传说面板上恒命中，10-25实机无限左翻）。等不到传送阵候选时关面板转步行；点阵后等不到「生成」由后续节点按自身失败路径处理。",
         "recognition": "Or",
         "any_of": [
             "Collect_OperationsMain_ToAreaMap"
@@ -164,12 +164,13 @@
             "node_name": [
                 "Collect_ForceTelepor_ToMap1_LiftOnlyOnce",
                 "Collect_ForceTelepor_ToMap1",
+                "Collect_ForceTelepor_LegendaryLift",
                 "Collect_ForceTelepor_LegendaryNextPage"
             ]
         },
         "next": [
             "Collect_ForceTelepor_Legendary",
-            "[JumpBack]Collect_MapLift",
+            "[JumpBack]Collect_ForceTelepor_LegendaryLift",
             "Collect_ForceTeleporCircle_Ico",
             "Collect_ForceTelepor_LegendaryScan"
         ],
@@ -253,7 +254,7 @@
         ]
     },
     "Collect_ForceTelepor_SelectNormal": {
-        "desc": "从所有传送技能中选择等级为新手、进阶、高手或达人的角色 | 先找名称，再在每个名称下方筛等级，返回通过筛选的等级框；按砍价练习已用的名称到等级纵向偏移反向点击同一张技能卡，避免借后项等级却点击首项传说。点击最多4次，由Legendary入口清零；点完仍未确认非传说面板（面板没开或仍是传说）时，超时后改用传说传送。",
+        "desc": "从所有传送技能中选择等级为初级（繁体新手）、进阶、高手或达人的角色 | 先找名称，再在每个名称下方筛等级，返回通过筛选的等级框；按砍价练习已用的名称到等级纵向偏移反向点击同一张技能卡，避免借后项等级却点击首项传说。点击最多4次，由Legendary入口清零；点完仍未确认非传说面板（面板没开或仍是传说）时，超时后改用传说传送。",
         "max_hit": 4,
         "recognition": "And",
         "all_of": [
@@ -304,6 +305,7 @@
             15
         ],
         "expected": [
+            "初级",
             "新手",
             "进阶",
             "進階",
@@ -326,6 +328,7 @@
                     55
                 ],
                 "expected": [
+                    "初级",
                     "新手",
                     "进阶",
                     "進階",
@@ -395,8 +398,23 @@
             "Collect_ForceTeleporCircle_ClickMSB"
         ]
     },
+    "Collect_ForceTelepor_LegendaryLift": {
+        "desc": "传说面板翻到最左页的闸，每次面板最多2轮 | 同时认到传说标题和左箭头才借Collect_MapLift连点左翻；非传说面板只有一张图，左箭头模板在那里恒命中，不能左翻。次数由MapCk清零，左箭头误认时用完让位给点阵。写法同ToMap1_LiftOnlyOnce。",
+        "max_hit": 2,
+        "recognition": "And",
+        "all_of": [
+            "Collect_ForceTelepor_Legendary",
+            "Collect_MapLift"
+        ],
+        "pre_delay": 0,
+        "post_delay": 0,
+        "timeout": 2000,
+        "next": [
+            "Collect_MapLift"
+        ]
+    },
     "Collect_ForceTelepor_LegendaryScan": {
-        "desc": "传说面板最左页没有传送阵时，往右找第一张有阵的图 | 只在传说面板右翻，非传说面板维持原样。MapCk翻到最左页且当页认不到阵后进入；不放回MapCk的列表，免得左翻节点把页面翻回最左。每次右翻经LegendaryNextPage计次，翻到头仍没有阵就关面板步行。",
+        "desc": "传说面板最左页没有传送阵时，往右找第一张有阵的图 | 只在传说面板右翻，非传说面板维持原样。MapCk经LegendaryLift翻到最左页且当页认不到阵后进入；不放回MapCk的列表，免得左翻把页面翻回最左。每次右翻经LegendaryNextPage计次，翻到头仍没有阵就关面板步行。",
         "recognition": "Or",
         "any_of": [
             "Collect_ForceTelepor_Legendary"

@@ -3,12 +3,53 @@
         "desc": "《卡带内导航模块》>>●开始>>【主流程】从进入箱庭开始，Collect_TargetMap系列主流程，每一个地图节点都包含大量子流程。通过下方地图名称通用前缀控制系列进度与退出（另一种思路是录入全部小地图名称）（另：起始包含一个图标点击托举异物Collect_FindPickupCat 不完善）。注意主流程子节点顺序。●>>找传送门>>【子流程1】初始节点_OperationsMain_Sandplay特殊卡带恢复。 | 【子流程2 FTC】找不到传送门。初始节点的error为进入强制传送门恢复模块。●>>进入传送地图后>>【子流程3】区域图强制进入白名单。Collect_TargetMap_Special_ClickTpCircleIco可复用的、无视地图前缀强制进入传送门（【重要】必须置于后面黑名单出口前。TargetMap系列主流程也要加上地图名）。 | 【子流程4】区域图越过黑名单，Collect_ClickTelepor_ButNotActive温和正则地图提示无传送阵、Collect_TeleporNotFind激进越过inverse判定故日常不应该触发（考虑删掉）。●>>命中出口>>● Collect_ClickTeleporCircleIco进入【技能模组】，技能模组结束会复位到下一站区域地图 ●>>非命中出口>>●【子流程5】拥有一套退出正则：Collect_QuickCart_TargetMapEnd温和识别关键词、Collect_Architecture_Underlying_Logic_Protection激进全局退出、Collect_OperationsEnd_NORight区域图到底、Collect_MapRight_NoFind区域图到底。"
     },
     "Collect_OperationsMain_Sandplay": {
-        "desc": "章节内主要操作开始；确认进入箱庭后沿通用流程采集。S18补采由正常收尾出口调用。",
+        "desc": "章节内主要操作开始；确认进入箱庭后清零本次寻路归位的命中次数，再沿通用流程采集。无法打开传送阵面板时，先尝试寻路列表归位，最多4次，随后交原传送技能链。回跳只重查next，不重复清零。S18补采由正常收尾出口调用。",
         "recognition": "Or",
         "any_of": [
             "Rec_SandBox_Pin_Tpl",
             "Rec_SandBox_Run_Tpl"
         ],
+        "action": "Custom",
+        "custom_action": "ClearNodeHitCount",
+        "custom_action_param": {
+            "node_name": [
+                "Collect_OperationsMain_ResetTag",
+                "Collect_WayPoint_Try",
+                "Collect_WayPoint_Entry",
+                "Collect_WayPoint_Open_Tpl",
+                "Collect_WayPoint_Csm",
+                "Collect_WayPoint_Board",
+                "Collect_WayPoint_Arrived"
+            ]
+        },
+        "anchor": {
+            "Pack_Click": ""
+        },
+        "post_delay": 1000,
+        "timeout": 5000,
+        "next": [
+            "[JumpBack]Collect_OperationsMain_ResetTag",
+            "Collect_OperationsMain_ToAreaMap",
+            "[JumpBack]Collect_Special_QR7-CW",
+            "[JumpBack]Collect_FindPickupCat",
+            "[JumpBack]StartGame_PerPetTask",
+            "[JumpBack]Collect_FindTeleporCircle0.9",
+            "[JumpBack]Collect_FindTeleporCircle"
+        ],
+        "on_error": [
+            "[JumpBack]Collect_WayPoint_Try",
+            "[JumpBack]Collect_Tab3",
+            "[JumpBack]Global_ToSandBox",
+            "Global_QuickCart_MenuReset",
+            "Global_Null_Exception",
+            "Global_Null_Panic"
+        ],
+        "focus": "CM.N.箱庭模块启动"
+    },
+    "Collect_OperationsMain_ResetTag": {
+        "desc": "每次进入通用箱庭流程时清理原有运行标签 | max_hit由Collect_OperationsMain_Sandplay清零，只执行一次；归位子流程回跳时不再清理，保留Tab3_OnFoot对原传送链的次数限制。",
+        "max_hit": 1,
+        "pre_delay": 0,
         "action": "Custom",
         "custom_action": "ResetTag",
         "custom_action_param": {
@@ -18,27 +59,7 @@
                 "NviMap_Sub_Err"
             ]
         },
-        "anchor": {
-            "Pack_Click": ""
-        },
-        "post_delay": 1000,
-        "timeout": 5000,
-        "next": [
-            "Collect_OperationsMain_ToAreaMap",
-            "[JumpBack]Collect_Special_QR7-CW",
-            "[JumpBack]Collect_FindPickupCat",
-            "[JumpBack]StartGame_PerPetTask",
-            "[JumpBack]Collect_FindTeleporCircle0.9",
-            "[JumpBack]Collect_FindTeleporCircle"
-        ],
-        "on_error": [
-            "[JumpBack]Collect_Tab3",
-            "[JumpBack]Global_ToSandBox",
-            "Global_QuickCart_MenuReset",
-            "Global_Null_Exception",
-            "Global_Null_Panic"
-        ],
-        "focus": "CM.N.箱庭模块启动"
+        "post_delay": 0
     },
     "Collect_FindPickupCat": {
         "desc": "猫咪已被拿起图标，",

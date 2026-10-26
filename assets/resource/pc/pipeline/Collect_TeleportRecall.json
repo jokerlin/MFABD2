@@ -15,6 +15,31 @@
             3
         ]
     },
+    "Collect_ForceTelepor_SelectNormal": {
+        "desc": "PC技能卡等级到名称的反向点击偏移，沿用砍价练习的35像素纵向间距。",
+        "target_offset": [
+            0,
+            -35,
+            0,
+            0
+        ]
+    },
+    "Rec_<Collect_ForceTelepor_SelectNormal>_Name": {
+        "roi": [
+            80,
+            604,
+            1120,
+            30
+        ]
+    },
+    "Rec_<Collect_ForceTelepor_SelectNormal>_Rank": {
+        "roi_offset": [
+            -10,
+            35,
+            21,
+            27
+        ]
+    },
     "Collect_ForceTeleporCircle_Ico": {
         "recognition": "Or",
         "any_of": [
@@ -480,55 +505,6 @@
             "魔法陣"
         ]
     },
-    "Collect_OnFoot_Skill3_4": {
-        "all_of": [
-            {
-                "sub_name": "TemplateMatch",
-                "recognition": "TemplateMatch",
-                "roi": [
-                    1086,
-                    455,
-                    72,
-                    68
-                ],
-                "template": [
-                    "Skill3.png"
-                ]
-            },
-            {
-                "sub_name": "ColorMatch",
-                "recognition": "ColorMatch",
-                "roi": [
-                    1117,
-                    476,
-                    11,
-                    3
-                ],
-                "method": 40,
-                "lower": [
-                    [
-                        0,
-                        0,
-                        200
-                    ]
-                ],
-                "upper": [
-                    [
-                        180,
-                        20,
-                        255
-                    ]
-                ],
-                "count": 10
-            }
-        ],
-        "target": [
-            1119,
-            488,
-            1,
-            1
-        ]
-    },
     "Collect_TeleporCircle_OnFoot_LoopFoot": {
         "roi": [
             619,
@@ -567,11 +543,6 @@
             419,
             82,
             32
-        ]
-    },
-    "Collect_ForceTelepor_IsEffect": {
-        "any_of": [
-            "Collect_ForceTelepor_MapCk"
         ]
     },
     "Rec_NavMap_Lift": {
@@ -826,7 +797,6 @@
         ]
     },
     "Collect_TeleporCircle_OnFoot_TPIcoCk": {},
-    "Collect_OnFoot_Skill3_1_Again": {},
     "Collect_OperationsMain_ToAreaMap": {
         "desc": "判断在区域地图(移动魔法阵)界面。|[PC覆盖·2026-07-13实录] base roi[183,11,249,53]左缘正好切'移'字左边条,OCR以0.989读成'多动魔法阵'→expected恒miss→传送阵界面死等(23:24实录)。roi左扩[150,11,280,53]罩全标题。注:节点属 Collect_Navigation,跑商链途经(节点命名空间全局合并)。",
         "roi": [

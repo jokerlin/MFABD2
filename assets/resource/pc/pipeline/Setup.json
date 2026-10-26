@@ -145,10 +145,10 @@
                     ],
                     "next": []
                 },
-                "Collect_ClickTelepor_TargetClass_PurpleProcess": {
+                "Collect_ClickTelepor_TargetClass_Purple": {
                     "max_hit": 5,
                     "next": [
-                        "Collect_ClickTelepor_TargetClass_PurpleProcess"
+                        "Collect_ClickTelepor_TargetClass_Purple"
                     ],
                     "timeout": 5000
                 },

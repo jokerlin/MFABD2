@@ -769,9 +769,9 @@
                         "卢戈森林"
                     ]
                 },
-                "Collect_ClickTelepor_TargetClass_PurpleProcess": {
+                "Collect_ClickTelepor_TargetClass_Purple": {
                     "next": [
-                        "Collect_ClickTelepor_TargetClass_PurpleProcess"
+                        "Collect_ClickTelepor_TargetClass_Purple"
                     ],
                     "timeout": 5000,
                     "max_hit": 5

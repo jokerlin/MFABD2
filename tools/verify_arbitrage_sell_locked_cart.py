@@ -4,7 +4,7 @@
 卡带（如剧情游戏卡17–19）列为最高价柜台，派发过去后点击只弹「救赎游戏卡尚未解锁，无法使用商店功能。」，
 该行标题是灰的，_Clr 永远认不到，节点一直 OCR→点击，也不打 [Record]
 （2026-10-20 23:42–23:52 实测连点 456 次，外部看门狗 10 分钟无步骤才停）。
-修复后点击后依次认：_Clr（选中）→ _Locked（缩略图上有锁）→ 自身重试；
+修复后点击后依次认：_Clr（选中）→ _Locked（缩略图上的锁或未解锁提示）→ 自身重试；
 _Locked 按入口锚点 PackSelect_Locked 退出（出售 HUB → BatchExit，补买 PackEntry → NotFound）。
 自身 max_hit 5，由 Arbitrage_Sell_PackList 每轮清零；用完走默认 on_error（Global_Null）结束，
 出售侧到不了 BatchEnd，主控停止后续派发；补买侧判未正常退出。
@@ -12,8 +12,12 @@ _Locked 按入口锚点 PackSelect_Locked 退出（出售 HUB → BatchExit，�
 夹具 sell_list_locked.png 取自 2026-10-21 00:12 实机截图（PlayCover，1280×720），出售页，
 卡带表可见活动游戏卡1/2/3/5/7 与上锁的剧情游戏卡17/18/19，顶部残留「尚未解锁」提示。
 没有实机「已选中」截图：可用卡带用例在点击后于命中行下方画一条白带，代替 _Clr 认的选中效果，
-只验证路由（_Clr 先于 _Locked、选中后走 PackSelect_Next）。「点不动也没有锁」的兜底用例
-不画白带，模拟点击不生效。源码仓库没有 OCR 模型（选卡是 OCR），模型缺失时只跑结构检查。
+只验证路由（保留提示，验证 _Clr 先于完整 _Locked、选中后走 PackSelect_Next）。锁图单分支和
+「点不动也没有锁」用例只保留实际资源中的 LockIcon 分支，隔离截图残留提示，不修改截图；
+后者不画白带，模拟点击不生效。另分别以实际 LockedToast 分支和完整 Or 走真实出售
+BatchExit → BatchEnd，验证收尾识别。补买退出还需滑回列表顶部，本静态截图不验证其正常返回。
+批次结果和汇总测试仍注入节点结果，只验证 Python 的状态与日志。源码仓库没有 OCR 模型
+（选卡是 OCR），模型缺失时跳过截图识别用例；计数重置用例改用 DirectHit，其他检查照常运行。
 
 运行：python -B tools/verify_arbitrage_sell_locked_cart.py -v
 """
@@ -115,14 +119,50 @@ class ShopListController(CustomController):
 class SellLockedCartTests(unittest.TestCase):
     @unittest.skipUnless(HAS_OCR, "源码仓库没有 OCR 模型")
     def test_locked_cart_exits_after_one_click(self):
+        # 单独验证锁图，避免截图中残留的未解锁提示掩盖锁图识别失败。
         for number in ("17", "18", "19"):
             with self.subTest(cart=f"剧情游戏卡{number}"):
-                controller, names, failed, timed_out = self.select(f"剧情游戏卡{number}", load("sell_list_locked.png"))
+                controller, names, failed, timed_out = self.select(
+                    f"剧情游戏卡{number}", load("sell_list_locked.png"),
+                    extra=self.locked_branch_override("LockIcon"))
                 self.assertFalse(timed_out)
                 self.assertFalse(failed)
                 self.assertEqual(len(controller.clicks), 1)
                 self.assertIn(LOCKED, names)
                 self.assertEqual(names[-1], LOCKED_EXIT)
+                self.assertNotIn(SELECTED, names)
+
+    @unittest.skipUnless(HAS_OCR, "源码仓库没有 OCR 模型")
+    def test_locked_toast_reaches_real_sale_batch_end(self):
+        # 不让锁图帮忙：直接使用生产 OCR 分支，并保留真实出售收尾识别。
+        extra = self.locked_branch_override("LockedToast")
+        extra[ENTRY] = {"anchor": {"PackSelect_Next": SELECTED,
+                                   "PackSelect_Locked": dispatch._EXIT}}
+        controller, names, failed, timed_out = self.select(
+            "剧情游戏卡18", load("sell_list_locked.png"), extra=extra,
+            expected_completed=(LOCKED, dispatch._EXIT, dispatch._END))
+        self.assertFalse(timed_out)
+        self.assertFalse(failed)
+        self.assertEqual(len(controller.clicks), 1)
+        self.assertEqual(names[-1], dispatch._END)
+        self.assertNotIn(dispatch._FAILED, names)
+        self.assertNotIn(SELECTED, names)
+
+    @unittest.skipUnless(HAS_OCR, "源码仓库没有 OCR 模型")
+    def test_locked_carts_reach_real_sale_batch_end(self):
+        # 完整生产 Or 及真实 BatchExit → BatchEnd；不伪造结束节点或出售页识别。
+        extra = {ENTRY: {"anchor": {"PackSelect_Next": SELECTED,
+                                     "PackSelect_Locked": dispatch._EXIT}}}
+        for number in ("17", "18", "19"):
+            with self.subTest(cart=f"剧情游戏卡{number}"):
+                controller, names, failed, timed_out = self.select(
+                    f"剧情游戏卡{number}", load("sell_list_locked.png"), extra=extra,
+                    expected_completed=(LOCKED, dispatch._EXIT, dispatch._END))
+                self.assertFalse(timed_out)
+                self.assertFalse(failed)
+                self.assertEqual(len(controller.clicks), 1)
+                self.assertEqual(names[-1], dispatch._END)
+                self.assertNotIn(dispatch._FAILED, names)
                 self.assertNotIn(SELECTED, names)
 
     @unittest.skipUnless(HAS_OCR, "源码仓库没有 OCR 模型")
@@ -138,7 +178,8 @@ class SellLockedCartTests(unittest.TestCase):
     @unittest.skipUnless(HAS_OCR, "源码仓库没有 OCR 模型")
     def test_unresponsive_unlocked_cart_stops_at_max_hit(self):
         # 没有锁、点了也选不中：点满上限后走默认 on_error 结束，不进选中或锁出口
-        controller, names, failed, timed_out = self.select("活动游戏卡7", load("sell_list_locked.png"))
+        controller, names, failed, timed_out = self.select(
+            "活动游戏卡7", load("sell_list_locked.png"), extra=self.locked_branch_override("LockIcon"))
         self.assertFalse(timed_out)
         self.assertEqual(len(controller.clicks), CLICKS_LIMIT)
         self.assertEqual(names.count(SWITCH), CLICKS_LIMIT)
@@ -154,6 +195,7 @@ class SellLockedCartTests(unittest.TestCase):
             "Verify_PackSelect_Round1": {"max_hit": 1, "pre_delay": 0, "post_delay": 0, "next": [PACK_LIST]},
             "Verify_PackSelect_Round2": {"pre_delay": 0, "post_delay": 0, "next": [PACK_LIST]},
         }
+        extra.update(self.locked_branch_override("LockIcon"))
         if not HAS_OCR:
             extra[SWITCH] = {"recognition": "DirectHit", "target": [260, 560, 10, 10]}
         controller, names, failed, timed_out = self.select("活动游戏卡7", load("sell_list_locked.png"),
@@ -168,8 +210,8 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertEqual(len(controller.clicks), CLICKS_LIMIT * 2)
 
     def test_locked_cart_sale_batch_is_marked_skipped(self):
-        # 锁卡带从 Arbitrage_Sell_HUB 经 _Locked → BatchExit → BatchEnd 退出时，
-        # SaleBatch 记为 skipped、page_ok 为真，保留原有库存，不报失败
+        # 注入已完成的 _Locked / BatchEnd 记录，只验证 Python 将结果记为 skipped、
+        # page_ok 为真并保留库存；真实收尾识别由上方截图用例验证。
         ui = SimpleNamespace(
             tasker=SimpleNamespace(stopping=False),
             clone=lambda: ui,
@@ -320,9 +362,20 @@ class SellLockedCartTests(unittest.TestCase):
         self.assertEqual(base[SWITCH]["max_hit"], CLICKS_LIMIT)
         self.assertEqual(base[PACK_LIST]["custom_action"], "ClearNodeHitCount")
         self.assertIn(SWITCH, base[PACK_LIST]["custom_action_param"]["node_name"])
-        self.assertEqual(base[LOCKED]["roi"], SWITCH)
+        self.assertEqual(base[LOCKED]["recognition"], "Or")
+        icon, toast = base[LOCKED]["any_of"]
+        self.assertEqual(icon["sub_name"], "LockIcon")
+        self.assertEqual(icon["recognition"], "TemplateMatch")
+        self.assertEqual(icon["roi"], SWITCH)
+        self.assertEqual(icon["roi_offset"], [-51, -25, 0, 50])
+        self.assertEqual(icon["template"], ["Shop/PackLocked.png"])
+        self.assertEqual(icon["threshold"], 0.8)
+        self.assertEqual(toast["sub_name"], "LockedToast")
+        self.assertEqual(toast["recognition"], "OCR")
+        self.assertEqual(toast["roi"], [400, 130, 650, 80])
+        self.assertEqual(toast["expected"], ["游戏卡尚未解锁.*无法使用商店功能"])
         self.assertEqual(base[LOCKED]["next"], ["[Anchor]PackSelect_Locked"])
-        self.assertTrue((BASE / "image" / base[LOCKED]["template"][0]).exists())
+        self.assertTrue((BASE / "image" / icon["template"][0]).exists())
         # 每个设 PackSelect_Next 的入口都给锁出口；清 PackSelect_Next 的出口一并清掉
         for name, node in base.items():
             anchor = node.get("anchor") if isinstance(node, dict) else None
@@ -341,7 +394,13 @@ class SellLockedCartTests(unittest.TestCase):
             self.assertNotIn(field, pc[SWITCH])
         self.assertNotIn(LOCKED, pc)
 
-    def select(self, cart, image, selectable=False, extra=None):
+    def locked_branch_override(self, sub_name):
+        base = json.loads((BASE / "pipeline/Arbitrage.json").read_text(encoding="utf-8"))
+        branches = [branch for branch in base[LOCKED]["any_of"] if branch["sub_name"] == sub_name]
+        self.assertEqual(len(branches), 1)
+        return {LOCKED: {"any_of": branches}}
+
+    def select(self, cart, image, selectable=False, extra=None, expected_completed=()):
         fixture = {
             # 代替 HUB / PreciseBuy 入口：只设两个锚点，然后走真实的 PackList → 选卡
             ENTRY: {"pre_delay": 0, "post_delay": 0, "next": [PACK_LIST],
@@ -374,6 +433,10 @@ class SellLockedCartTests(unittest.TestCase):
                 watchdog.start()
                 detail = tasker.post_task(ENTRY).wait().get()
                 names = [node.name for node in detail.nodes if node and node.name] if detail else []
+                for name in expected_completed:
+                    self.assertTrue(detail and any(
+                        node and node.name == name and node.completed for node in detail.nodes),
+                        f"节点未完成: {name}; 实际节点: {names}")
                 failed = detail is None or detail.status.failed
                 return controller, names, failed, fired.is_set()
             finally:

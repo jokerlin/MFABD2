@@ -3167,7 +3167,7 @@
         ]
     },
     "Arbitrage_Sell_PackShopSwich": {
-        "desc": "需要[custom]传入正确的名称.出售卡带选择,空格删去匹配cus源,保留默认。点击后先认选中高亮，再认本行缩略图上的锁：未解锁卡带点了只弹「尚未解锁」提示，永远选不中，交给 _Locked 按入口锚点退出。自循环 max_hit 5，每轮找卡由 Arbitrage_Sell_PackList 清零；用完走默认 on_error（Global_Null）结束本批，不再静默连点（2026-10-20 实测对剧情游戏卡18连点 456 次）：出售侧未到 BatchEnd，主控停止后续派发；补买侧判未正常退出。",
+        "desc": "需要[custom]传入正确的名称.出售卡带选择,空格删去匹配cus源,保留默认。点击后先认选中高亮，再认本行缩略图上的锁或「尚未解锁，无法使用商店功能」提示，交给 _Locked 按入口锚点退出。自循环 max_hit 5，每轮找卡由 Arbitrage_Sell_PackList 清零；用完走默认 on_error（Global_Null）结束本批，不再静默连点（2026-10-20 实测对剧情游戏卡18连点 456 次）：出售侧未到 BatchEnd，主控停止后续派发；补买侧判未正常退出。",
         "max_hit": 5,
         "recognition": "OCR",
         "roi": [
@@ -3220,19 +3220,38 @@
         ]
     },
     "Arbitrage_Sell_PackShopSwich_Locked": {
-        "desc": "目标卡带缩略图上有锁：账号尚未解锁该卡带，商店进不去。roi 取选卡命中框左移 51、上下各扩 25，覆盖本行缩略图中央的锁，不含相邻行；命中框是标签行或标题行都能覆盖。按入口锚点 PackSelect_Locked 退出：出售侧结束本批、主控跳过本项；补买侧按未找到处理。",
-        "recognition": "TemplateMatch",
-        "roi": "Arbitrage_Sell_PackShopSwich",
-        "roi_offset": [
-            -51,
-            -25,
-            0,
-            50
+        "desc": "目标卡带未解锁：本行锁图或屏幕提示任一路命中即退出，选中高亮仍由前置 _Clr 优先处理。锁图 roi 取选卡命中框左移 51、上下各扩 25，覆盖本行缩略图中央，不含相邻行；提示 OCR 区域和文字取自 1280×720 简体截图，PC 繁体仍需核对。按入口锚点 PackSelect_Locked 退出：出售侧结束本批、主控跳过本项；补买侧按未找到处理。",
+        "recognition": "Or",
+        "any_of": [
+            {
+                "sub_name": "LockIcon",
+                "recognition": "TemplateMatch",
+                "roi": "Arbitrage_Sell_PackShopSwich",
+                "roi_offset": [
+                    -51,
+                    -25,
+                    0,
+                    50
+                ],
+                "template": [
+                    "Shop/PackLocked.png"
+                ],
+                "threshold": 0.8
+            },
+            {
+                "sub_name": "LockedToast",
+                "recognition": "OCR",
+                "roi": [
+                    400,
+                    130,
+                    650,
+                    80
+                ],
+                "expected": [
+                    "游戏卡尚未解锁.*无法使用商店功能"
+                ]
+            }
         ],
-        "template": [
-            "Shop/PackLocked.png"
-        ],
-        "threshold": 0.8,
         "pre_delay": 0,
         "post_delay": 0,
         "next": [

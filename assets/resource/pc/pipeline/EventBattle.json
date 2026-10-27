@@ -116,22 +116,7 @@
     },
     "SeasonEvent_TabTo_Challenge": {
         "all_of": [
-            {
-                "sub_name": "OCR",
-                "recognition": "OCR",
-                "roi": [
-                    175,
-                    8,
-                    296,
-                    75
-                ],
-                "expected": [
-                    "普通",
-                    "修炼",
-                    "血染的结界",
-                    "一般戰鬥"
-                ]
-            },
+            "Rec_EnterlBattle_IsNomarl",
             {
                 "sub_name": "OCR",
                 "recognition": "OCR",
@@ -147,6 +132,14 @@
                 ]
             },
             "Sub_Ocr_Enable_Clr"
+        ]
+    },
+    "Rec_EnterlBattle_IsNomarl": {
+        "expected": [
+            "普通",
+            "修炼",
+            "血染的结界",
+            "一般戰鬥"
         ]
     },
     "SeasonEvent_FreeAP_Verdict": {

@@ -1189,11 +1189,20 @@ class RedDotDetector(CustomRecognition):
           · 预算(max_parents/max_full_runs/time_budget_ms)**全局共享**，
             不随入口数增长 —— 否则入口越多越容易撞出一个偶然能过的答案；
           · 各入口父块来源互斥，同一父块不会被两个入口各试一遍。
+
+        **时间预算管"要不要再试下一个父块"，不管"第一个试不试完"。** 首个父块的主档与
+        陪跑档必定跑完（成本由 max_full_runs 与面积闸封顶），之后才按墙钟判超时。
+        起因 GachaADV_Location1（2026-10-28 真机）：进入抽卡页时进程被卡了约 110ms，
+        恰好卡在算切点那 0.3ms 里，第一刀还没砍就判超时，重跑 0 次。外部卡顿已是
+        沉没成本，因它放弃只会白白漏检；离线同图全程 3ms。
         """
         started = time.perf_counter()
         budget_ms = config["time_budget_ms"]
+        guaranteed = False       # 正在处理的是不是首个父块（不受时间预算约束）
 
         def timed_out():
+            if guaranteed:
+                return False
             return (time.perf_counter() - started) * 1000 >= budget_ms
 
         def elapsed():
@@ -1226,6 +1235,7 @@ class RedDotDetector(CustomRecognition):
             if tried_parents >= config["max_parents"]:
                 row["跳过"] = "父块预算"
                 continue
+            guaranteed = tried_parents == 0
             if timed_out():
                 row["跳过"] = "超时"
                 stop_reason = "超时"

@@ -244,6 +244,7 @@
         "next": [
             "Global_ToSandBox_Enter",
             "Global_ToSandBox_Reset",
+            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk",
             "[JumpBack]Global_WaitingForLoading"
         ],
         "on_error": [
@@ -274,7 +275,8 @@
         "next": [
             "[JumpBack]Global_WaitingForLoading",
             "Global_ToSandBox_Enter",
-            "Global_ToSandBox_Reset"
+            "Global_ToSandBox_Reset",
+            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk"
         ],
         "on_error": [
             "[JumpBack]StartGame_Special",

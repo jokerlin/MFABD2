@@ -16,11 +16,13 @@ from maa.define import RectType
 from utils import mfaalog
 from .rdd_sampler import RddSampler
 from .rdd_hsv_rescue import (
-    DIRECTIONS,
+    HUE_DIRECTIONS,
+    SV_DIRECTIONS,
     boxes_agree,
     channel_cutpoints,
     cut_happened,
-    direction_deltas,
+    direction_cut,
+    hue_neighbor_states,
     is_strict_mask,
     lineage_parent,
     neighbor_states,
@@ -650,7 +652,7 @@ _MISS_BRIEF = {
 
 # 每种不成立各自的调参方向；成立时的说明由 _rescue_hint 现算。
 _RESCUE_HINT_CN = {
-    "no_hit": "三个切法都没从该父块切出合格红点；看 尝试[].卡在 —— "
+    "no_hit": "各切法都没从该父块切出合格红点；看 尝试[].卡在 —— "
               "aspect=切得不够狠，interior/red_mask/area=切过头",
     "unconfirmed": "局部结论未能在整幅 ROI 复现，已 fail closed",
     "unstable_hit": "只有单档命中、相邻档不复现；切点疑似落在悬崖边，不予采纳",
@@ -1114,14 +1116,14 @@ class RedDotDetector(CustomRecognition):
 
     def _rescue_try(self, *, hsv_np, baseline, geo, delta_s, delta_v,
                     hsv_ranges, area_range, aspect_range, gap_ratio,
-                    min_conf, rx, ry):
+                    min_conf, rx, ry, hue_keep=None):
         """在**父块外接框**内跑一次完整检测链，返回 (候选, 卡在, 红像素数)。
 
         只在局部重跑而非整个 ROI：救援的判定被 lineage 限定在这一个父块内，
         框选区其余像素怎么变都与结论无关。实测 23 处对比与全区重跑逐位一致，
         平均提速 5.8 倍，且成本随父块（受面积闸约束 ≤ area_max）而非 ROI 增长。
         """
-        profile = strict_profile(hsv_ranges, delta_s, delta_v)
+        profile = strict_profile(hsv_ranges, delta_s, delta_v, hue_keep)
         if profile is None:
             return None, "参数", 0
 
@@ -1177,10 +1179,12 @@ class RedDotDetector(CustomRecognition):
         """严格 HSV 救援：切点由父块自身分布算出，局部重跑，跨档复现验收。
 
         流程（每个候选父块，按"像不像红点"排序后依次处理）：
-          1. 取该父块像素，两个通道各做一次直方图 → Otsu 切点（微秒级）
+          1. 取该父块像素，S/V 各做一次直方图 → Otsu 切点；色相在展开轴上另算一刀（微秒级）
           2. 三个切法(只切亮度/只切饱和/双切)各跑一次**主档**
           3. 命中位置一致 → 取增量最小的切法；位置分散 → 判方向歧义，拒绝
           4. 对选中切法补跑上下**陪跑档**，交 select_stable_winner 判跨档稳定
+          5. S/V 没得出稳定解（一个没中 / 中了不稳）→ 色相两个切法照 2~4 再走一遍；
+             S/V 曾命中的框也要与色相的框对得上，否则同样判方向歧义
         任一环节失败即换下一个父块；预算耗尽维持 baseline miss。
 
         `entries` 是 resolve_entry_plan 给出的入口序列 [(配置键, 父块来源, mode)]，
@@ -1225,6 +1229,91 @@ class RedDotDetector(CustomRecognition):
         win_entry = win_entry_mode = None
         stop_reason = "父块用尽"
 
+        def run_group(geo, row, cuts, directions, prior_boxes):
+            """一组切法走完 主档 → 位置一致 → 陪跑档 → 跨档稳定。
+
+            返回 (判定, 胜出记录, 支撑, 主档切法, 胜出方向, 本组主档命中框)；
+            判定为 None 表示本组一个主档都没命中，"方向歧义"表示命中位置分散。
+            prior_boxes 是前一组(S/V)主档命中的框，须与本组的框一并对得上。
+            """
+            nonlocal full_runs, stop_reason
+            probes, seen_cuts = {}, set()
+            for direction in directions:
+                if timed_out():
+                    stop_reason = "超时"
+                    break
+                if full_runs >= config["max_full_runs"]:
+                    stop_reason = "重跑预算"
+                    break
+                cut = direction_cut(cuts, direction)
+                if cut is None or self._cut_key(cut) in seen_cuts:
+                    continue          # 例如某通道增量为 0 时，双切与单切等价
+                seen_cuts.add(self._cut_key(cut))
+                cand, blocked, red_px = self._rescue_try(
+                    hsv_np=hsv_np, baseline=baseline, geo=geo,
+                    delta_s=cut["delta_s"], delta_v=cut["delta_v"],
+                    hsv_ranges=hsv_ranges, area_range=area_range,
+                    aspect_range=aspect_range, gap_ratio=gap_ratio,
+                    min_conf=min_conf, rx=rx, ry=ry, hue_keep=cut["hue_keep"])
+                full_runs += 1
+                attempts.append(self._rescue_attempt(
+                    row["序"], direction, cut, red_px, blocked, cand))
+                if cand is not None:
+                    probes[direction] = (cut, cand)
+
+            boxes = [c["box_local"] for _, c in probes.values()]
+            if not probes:
+                return None, None, [], None, None, boxes
+            # 不同切法必须指向同一处，否则是真歧义
+            if not boxes_agree(list(prior_boxes) + boxes):
+                return "方向歧义", None, [], None, None, boxes
+
+            win_direction = min(probes, key=lambda d: (
+                probes[d][0]["delta_s"] + probes[d][0]["delta_v"]))
+            main_cut, main_cand = probes[win_direction]
+
+            if win_direction in HUE_DIRECTIONS:
+                states = hue_neighbor_states(
+                    win_direction, main_cut["hue_cut"], cuts["色相"]["轴"])
+            else:
+                states = neighbor_states(win_direction, main_cut["delta_s"],
+                                         main_cut["delta_v"], config)
+            records = []
+            for state in states:
+                is_main = self._cut_key(state) == self._cut_key(main_cut)
+                cand = main_cand if is_main else None
+                if cand is None:
+                    if timed_out():
+                        stop_reason = "超时"
+                        break
+                    if full_runs >= config["max_full_runs"]:
+                        stop_reason = "重跑预算"
+                        break
+                    cand, blocked, red_px = self._rescue_try(
+                        hsv_np=hsv_np, baseline=baseline, geo=geo,
+                        delta_s=state["delta_s"], delta_v=state["delta_v"],
+                        hsv_ranges=hsv_ranges, area_range=area_range,
+                        aspect_range=aspect_range, gap_ratio=gap_ratio,
+                        min_conf=min_conf, rx=rx, ry=ry,
+                        hue_keep=state.get("hue_keep"))
+                    full_runs += 1
+                    attempts.append(self._rescue_attempt(
+                        row["序"], win_direction + "·陪跑", state,
+                        red_px, blocked, cand))
+                if cand is None:
+                    continue
+                records.append({
+                    "state": state, "parent_id": geo["label"],
+                    "box_local": cand["box_local"],
+                    "scan_index": cand["scan_index"],
+                    "candidate": cand, "profile": cand["profile"],
+                })
+
+            group_winner, group_decision, group_support = select_stable_winner(
+                records, config["min_stable_states"])
+            return (group_decision, group_winner, group_support,
+                    main_cut, win_direction, boxes)
+
         for entry_key, entry_mode, geo in plan:
             row = {"序": len(parent_rows) + 1, "入口": entry_key,
                    "几何": f"{geo['w']}x{geo['h']}", "面积": geo["area"],
@@ -1249,84 +1338,32 @@ class RedDotDetector(CustomRecognition):
             tried_parents += 1
             row["试了"] = True
 
-            # —— 第 2 步：三个切法各跑一次主档 ——
-            probes, seen_deltas = {}, set()
-            for direction in DIRECTIONS:
-                if timed_out():
-                    stop_reason = "超时"
-                    break
-                if full_runs >= config["max_full_runs"]:
-                    stop_reason = "重跑预算"
-                    break
-                pair = direction_deltas(cuts, direction)
-                if pair is None or pair in seen_deltas:
-                    continue          # 例如某通道增量为 0 时，双切与单切等价
-                seen_deltas.add(pair)
-                cand, blocked, red_px = self._rescue_try(
-                    hsv_np=hsv_np, baseline=baseline, geo=geo,
-                    delta_s=pair[0], delta_v=pair[1], hsv_ranges=hsv_ranges,
-                    area_range=area_range, aspect_range=aspect_range,
-                    gap_ratio=gap_ratio, min_conf=min_conf, rx=rx, ry=ry)
-                full_runs += 1
-                attempts.append(self._rescue_attempt(
-                    row["序"], direction, pair, red_px, blocked, cand))
-                if cand is not None:
-                    probes[direction] = (pair, cand)
-
-            if not probes:
+            # —— 第 2~4 步：S/V 三个切法先走一遍 ——
+            result = run_group(geo, row, cuts, SV_DIRECTIONS, ())
+            # —— 第 5 步：色相后手 —— 只补"切不开"(没中/不稳)，不补"不该救"：
+            # 方向歧义、同档多解、多解歧义都是安全拒绝，换把刀重来等于绕过它们。
+            if result[0] in (None, "unstable_hit"):
+                hue = run_group(geo, row, cuts, HUE_DIRECTIONS, result[5])
+                if result[0] is None or hue[0] == "stable_hit":
+                    result = hue
+            group_decision, cand_winner, cand_support, main_cut, direction, _ = result
+            if group_decision is None:
                 continue
-            # —— 第 3 步：不同切法必须指向同一处，否则是真歧义 ——
-            if not boxes_agree([c["box_local"] for _, c in probes.values()]):
+            if group_decision == "方向歧义":
                 row["跳过"] = "方向歧义"
                 stop_reason = "方向歧义"
                 continue
 
-            win_direction = min(probes, key=lambda d: sum(probes[d][0]))
-            (ds, dv), main_cand = probes[win_direction]
-
-            # —— 第 4 步：补跑陪跑档，交既有的跨档稳定判定 ——
-            records = []
-            for state in neighbor_states(win_direction, ds, dv, config):
-                is_main = (state["delta_s"], state["delta_v"]) == (ds, dv)
-                cand = main_cand if is_main else None
-                if cand is None:
-                    if timed_out():
-                        stop_reason = "超时"
-                        break
-                    if full_runs >= config["max_full_runs"]:
-                        stop_reason = "重跑预算"
-                        break
-                    cand, blocked, red_px = self._rescue_try(
-                        hsv_np=hsv_np, baseline=baseline, geo=geo,
-                        delta_s=state["delta_s"], delta_v=state["delta_v"],
-                        hsv_ranges=hsv_ranges, area_range=area_range,
-                        aspect_range=aspect_range, gap_ratio=gap_ratio,
-                        min_conf=min_conf, rx=rx, ry=ry)
-                    full_runs += 1
-                    attempts.append(self._rescue_attempt(
-                        row["序"], win_direction + "·陪跑",
-                        (state["delta_s"], state["delta_v"]),
-                        red_px, blocked, cand))
-                if cand is None:
-                    continue
-                records.append({
-                    "state": state, "parent_id": geo["label"],
-                    "box_local": cand["box_local"],
-                    "scan_index": cand["scan_index"],
-                    "candidate": cand, "profile": cand["profile"],
-                })
-
-            cand_winner, cand_decision, cand_support = select_stable_winner(
-                records, config["min_stable_states"])
-            decision, support = cand_decision, cand_support
+            decision, support = group_decision, cand_support
             cutpoints = cuts
-            if cand_decision == "stable_hit":
+            win_direction = direction
+            if group_decision == "stable_hit":
                 winner = cand_winner
-                win_main = (ds, dv)
+                win_main = main_cut
                 win_entry, win_entry_mode = entry_key, entry_mode
                 stop_reason = "稳定命中"
             else:
-                row["跳过"] = cand_decision
+                row["跳过"] = group_decision
 
         if decision is None:
             decision = "no_hit"
@@ -1357,21 +1394,35 @@ class RedDotDetector(CustomRecognition):
                 "方向": win_direction,
                 # 主档 = 切点直接算出的那一档；采纳档 = 复现组里最保守(增量最小)的一档。
                 # 两者可以不同，这不是矛盾：切点定位置，复现组决定最终取哪一档。
-                "主档增量": list(win_main) if win_main else None,
+                "主档增量": ([win_main["delta_s"], win_main["delta_v"]]
+                             if win_main else None),
                 "采纳增量": [winner["state"]["delta_s"],
                              winner["state"]["delta_v"]],
                 "框": list(winner["box_local"]),
                 "分": winner["candidate"]["conf"],
                 "复现": len(support[0]["states"]) if support else 0,
             }
+            if winner["state"].get("hue_keep") is not None:
+                # 色相切法的"增量"恒为 [0,0]，真正的档位是展开轴上保留的区间。
+                public["胜出"]["主档色相保留"] = list(win_main["hue_keep"])
+                public["胜出"]["采纳色相保留"] = list(winner["state"]["hue_keep"])
         return public
 
     @staticmethod
-    def _rescue_attempt(parent_no, direction, pair, red_px, blocked, cand):
+    def _cut_key(cut):
+        """一档收紧的身份：S/V 增量 + 色相保留区间。用于主档去重与认出陪跑组里的主档。"""
+        keep = cut.get("hue_keep")
+        return (int(cut["delta_s"]), int(cut["delta_v"]),
+                tuple(int(v) for v in keep) if keep is not None else None)
+
+    @staticmethod
+    def _rescue_attempt(parent_no, direction, cut, red_px, blocked, cand):
         """一条尝试记录。失败档不带 框/分（恒为空），省体积也少一层噪声。"""
         row = {"父块": parent_no, "方向": direction,
-               "增量": [int(pair[0]), int(pair[1])], "红像素": int(red_px),
+               "增量": [int(cut["delta_s"]), int(cut["delta_v"])], "红像素": int(red_px),
                "卡在": blocked}
+        if cut.get("hue_keep") is not None:
+            row["色相保留"] = [int(v) for v in cut["hue_keep"]]
         if cand is not None:
             row["框"] = list(cand["box_local"])
             row["分"] = cand["conf"]
@@ -1391,8 +1442,15 @@ class RedDotDetector(CustomRecognition):
                     base.append(f"饱和切点{cutpoints['饱和']['Otsu']}"
                                 f"(基线{cutpoints['饱和']['基线']})")
             times = len(support[0]["states"]) if support else 0
+            keep = winner["state"].get("hue_keep")
+            if keep is not None:
+                hue = (cutpoints or {}).get("色相") or {}
+                base.append(f"色相刀位{hue.get('Otsu')}(展开轴{hue.get('轴')})")
+                adopted = f"保留色相[{keep[0]},{keep[1]}]"
+            else:
+                adopted = f"ΔS{ds}/ΔV{dv}"
             return (f"切法{direction}；{'；'.join(base)}；"
-                    f"相邻{times}档复现同框，采纳最保守档 ΔS{ds}/ΔV{dv}；血统同源")
+                    f"相邻{times}档复现同框，采纳最保守档 {adopted}；血统同源")
         return _RESCUE_HINT_CN.get(decision, f"未成立({decision})")
 
     @staticmethod
@@ -1408,7 +1466,10 @@ class RedDotDetector(CustomRecognition):
         head = f"[RedDotDetector] 救援 {node} | {rescue.get('结论')} | 入口={entry_tag}"
         win = rescue.get("胜出")
         if win:
-            tail = (f"{win['方向']}ΔS{win['采纳增量'][0]}/ΔV{win['采纳增量'][1]} "
+            keep = win.get("采纳色相保留")
+            adopted = (f"保留[{keep[0]},{keep[1]}]" if keep is not None
+                       else f"ΔS{win['采纳增量'][0]}/ΔV{win['采纳增量'][1]}")
+            tail = (f"{win['方向']}{adopted} "
                     f"复现{win['复现']}档 → box={win['框']} 分{win['分']}")
         else:
             blocked = [a.get("卡在") for a in (rescue.get("尝试") or [])

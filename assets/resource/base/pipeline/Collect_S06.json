@@ -1,6 +1,6 @@
 {
     "Collect_S06_ReadMe": {
-        "desc": "异教塔（Story_06）整卡旁路说明 | 第2、5层没有传送阵，移动魔法阵面板里也没有它们的页，通用切图流程处理不了，具名卡用 Pack_Bypass 把整卡交给本模块。路线：快速移动到狩猎场（脚下即传送阵）→ 面板向左选第1层传送 → 采第1层 → 走楼梯上第2层采集 → 快速移动回狩猎场 → 面板选第6层传送 → 采第6层 → 点红叉下第5层 → 开区域地图确认是第5层后采集 → 公共成功收尾。 | 进度记在本轮标签 S06_F1/F2/F6/F5，技能模块正常出口才置位，同轮重进卡带时跳过已采楼层。到层判据：第1、6层靠面板名条加传送；第2层靠楼梯去向固定；第5层只能开区域地图读标题——先确认地图已打开再读，读到第6层就关图重点红叉，读不出就关图重开。走不通都在模块内按次数重试，次数用完才退栈回 Collect_PackScan_Frame，不写完成。本模块只设两组公共模块的接口锚：QuickMove_*（快速移动参数）与 QuickSkill_Egress（技能模块出口）。"
+        "desc": "异教塔（Story_06）整卡旁路说明 | 第2、5层没有传送阵，移动魔法阵面板里也没有它们的页，通用切图流程处理不了，具名卡用 Pack_Bypass 把整卡交给本模块。路线：快速移动到狩猎场（脚下即传送阵）→ 面板向左选第1层传送 → 采第1层 → 走楼梯上第2层采集 → 快速移动回狩猎场 → 面板选第6层传送 → 采第6层 → 点红叉下第5层 → 开区域地图确认是第5层后采集 → 公共成功收尾。 | 进度记在本轮标签 S06_F1/F2/F6/F5：技能模块正常出口才记 -1，各分流点用 CheckTag max 0 判「已采」、命中就跳过该层，落选才采；不用 inverse。同轮重进卡带时据此跳过已采楼层。到层判据：第1、6层靠面板名条加传送；第2层靠楼梯去向固定；第5层只能开区域地图读标题——先确认地图已打开再读，读到第6层就关图重点红叉，读不出就关图重开。走不通都在模块内按次数重试，次数用完才退栈回 Collect_PackScan_Frame，不写完成。本模块只设两组公共模块的接口锚：QuickMove_*（快速移动参数）与 QuickSkill_Egress（技能模块出口）。"
     },
     "Collect_S06_Entry": {
         "desc": "异教塔整卡入口 | 确认箱庭后清零本模块所有节点的 max_hit 计数，设置快速移动参数（去狩猎场，成功到 AtHunt，失败退栈）；已站在传送阵上看得到手标时直接开面板。 | 同轮补采会再次进入，这里把计数与技能出口锚都清成首次进入时的状态；进卡总次数由 Collect_Pack_Story_6 的 max_hit 限制。本模块新增带 max_hit 的节点时要补进这份清单。本卡绕过通用箱庭入口，顺带清掉 Pack_Click 与 SandBox_Bypass 这两个通用锚。",
@@ -14,11 +14,11 @@
         "custom_action_param": {
             "node_name": [
                 "Collect_S06_2F_Entry",
-                "Collect_S06_2F_Check",
-                "Collect_S06_6F_Check",
-                "Collect_S06_5F_Check",
+                "Collect_S06_Skip_F2",
+                "Collect_S06_Skip_F6",
+                "Collect_S06_Skip_F5",
                 "Collect_S06_Resume_F2",
-                "Collect_S06_Resume_F1_Ck",
+                "Collect_S06_Skip_F1",
                 "Collect_S06_Stage_Done_F1",
                 "Collect_S06_Stage_Done_F2",
                 "Collect_S06_Stage_Done_F6",
@@ -32,7 +32,6 @@
                 "Collect_S06_Panel_TeleportF1",
                 "Collect_S06_Panel_Ck_F6",
                 "Collect_S06_6F_Skill",
-                "Collect_S06_NotYetF5",
                 "Collect_S06_6F_To5F",
                 "Collect_S06_5F_Skill",
                 "Collect_S06_Floor_Read",
@@ -77,7 +76,7 @@
         "focus": "S06.已到狩猎场，打开传送阵面板"
     },
     "Collect_S06_2F_Entry": {
-        "desc": "第1层走到第2层后的接点 | 确认在箱庭后看进度：第2层未采去采集，已采直接快速移动回狩猎场。 | 本段不开导航地图核对楼层，点楼梯的去向是固定的。",
+        "desc": "第1层走到第2层后的接点 | 确认在箱庭后看进度：第2层已采直接快速移动回狩猎场，否则采第2层。 | 本段不开区域地图核对楼层，点楼梯的去向是固定的。",
         "max_hit": 3,
         "recognition": "Or",
         "any_of": [
@@ -86,69 +85,66 @@
         ],
         "action": "DoNothing",
         "next": [
-            "Collect_S06_2F_Check",
-            "Collect_S06_ReturnToHunt"
+            "Collect_S06_Skip_F2",
+            "Collect_S06_2F_Skill"
         ],
         "focus": "S06.到达第2层(箱庭)"
     },
-    "Collect_S06_2F_Check": {
-        "desc": "第2层本轮未采时去采集 | CheckTag(S06_F2, max=1)，命中 = 未采。 | max 必须写 1，写 0 永远不命中（agent/recognition/counter.py 判定当前值 < max 才命中）；落选由调用方列表的下一项接走。",
+    "Collect_S06_Skip_F2": {
+        "desc": "第2层本轮已采时不再采，快速移动回狩猎场 | 借 Resume_F2 的判据（S06_F2 已采）。 | 走到第2层后先问这一项，落选由 2F_Entry 的下一项去采集。",
         "max_hit": 30,
-        "recognition": "Custom",
-        "custom_recognition": "CheckTag",
-        "custom_recognition_param": {
-            "tag": "S06_F2",
-            "max": 1
-        },
+        "recognition": "Or",
+        "any_of": [
+            "Collect_S06_Resume_F2"
+        ],
         "action": "DoNothing",
         "post_delay": 0,
         "next": [
-            "Collect_S06_2F_Skill"
+            "Collect_S06_ReturnToHunt"
         ],
-        "focus": "S06.第2层这次还没采-去采集"
+        "focus": "S06.第2层已采过-回狩猎场"
     },
-    "Collect_S06_6F_Check": {
-        "desc": "第6层本轮未采时去采集 | CheckTag(S06_F6, max=1)，命中 = 未采。 | max 必须写 1，写 0 永远不命中（agent/recognition/counter.py 判定当前值 < max 才命中）；落选由调用方列表的下一项接走。",
+    "Collect_S06_Skip_F6": {
+        "desc": "第6层本轮已采时直接下第5层 | CheckTag(S06_F6, max=0)，命中 = 已采，跳过第6层采集去点红叉。 | CheckTag max 0：采完由 Stage_Done 记 -1，-1<0 命中；未采是 0，不命中，落选由调用方列表的下一项接走。排在 Skip_F5 之后：第5层已采时一定也采过第6层，要先收尾。",
         "max_hit": 30,
         "recognition": "Custom",
         "custom_recognition": "CheckTag",
         "custom_recognition_param": {
             "tag": "S06_F6",
-            "max": 1
+            "max": 0
         },
         "action": "DoNothing",
         "post_delay": 0,
         "next": [
-            "Collect_S06_6F_Skill"
+            "Collect_S06_6F_To5F"
         ],
-        "focus": "S06.第6层这次还没采-去采集"
+        "focus": "S06.第6层已采过-下第5层"
     },
-    "Collect_S06_5F_Check": {
-        "desc": "第5层本轮未采时去采集 | CheckTag(S06_F5, max=1)，命中 = 未采。 | max 必须写 1，写 0 永远不命中（agent/recognition/counter.py 判定当前值 < max 才命中）；落选由调用方列表的下一项接走。",
+    "Collect_S06_Skip_F5": {
+        "desc": "第5层本轮已采时整卡收尾 | CheckTag(S06_F5, max=0)，命中 = 已采，直接走 Finish。 | CheckTag max 0：采完由 Stage_Done 记 -1，-1<0 命中；未采是 0，不命中，落选由调用方列表的下一项接走。传送到第6层后与核对到第5层后都先问这一项。",
         "max_hit": 30,
         "recognition": "Custom",
         "custom_recognition": "CheckTag",
         "custom_recognition_param": {
             "tag": "S06_F5",
-            "max": 1
+            "max": 0
         },
         "action": "DoNothing",
         "post_delay": 0,
         "next": [
-            "Collect_S06_5F_Skill"
+            "Collect_S06_Finish"
         ],
-        "focus": "S06.第5层这次还没采-去采集"
+        "focus": "S06.第5层已采过-收尾"
     },
     "Collect_S06_Resume_F2": {
-        "desc": "第2层本轮已采时改选第6层 | 与 2F_Check 同一标签加 inverse，命中 = 已采，在狩猎场打开的面板里向左找第6层页。 | 未命中时由 Panel_Select 的下一项去选第1层。",
+        "desc": "第2层本轮已采时改选第6层 | CheckTag(S06_F2, max=0)，命中 = 已采，在狩猎场打开的面板里向左找第6层页。 | CheckTag max 0：采完由 Stage_Done 记 -1，-1<0 命中；未采是 0，不命中，落选由调用方列表的下一项接走。未命中时由 Panel_Select 的下一项去选第1层。",
         "max_hit": 30,
         "recognition": "Custom",
         "custom_recognition": "CheckTag",
         "custom_recognition_param": {
             "tag": "S06_F2",
-            "max": 1
+            "max": 0
         },
-        "inverse": true,
         "action": "DoNothing",
         "post_delay": 0,
         "next": [
@@ -156,16 +152,15 @@
         ],
         "focus": "S06.第2层已完成，选择第6层"
     },
-    "Collect_S06_Resume_F1_Ck": {
-        "desc": "第1层本轮已采时直接去第2层 | CheckTag(S06_F1) 加 inverse，命中 = 已采，跳过第1层采集，按原站位走楼梯。 | 只有第2层未采才会传到第1层，这里不必再查第2层。",
+    "Collect_S06_Skip_F1": {
+        "desc": "第1层本轮已采时直接去第2层 | CheckTag(S06_F1, max=0)，命中 = 已采，跳过第1层采集，按原站位走楼梯。 | CheckTag max 0：采完由 Stage_Done 记 -1，-1<0 命中；未采是 0，不命中，落选由调用方列表的下一项接走。只有第2层未采才会传到第1层，这里不必再查第2层。",
         "max_hit": 30,
         "recognition": "Custom",
         "custom_recognition": "CheckTag",
         "custom_recognition_param": {
             "tag": "S06_F1",
-            "max": 1
+            "max": 0
         },
-        "inverse": true,
         "action": "DoNothing",
         "post_delay": 0,
         "next": [
@@ -174,14 +169,14 @@
         "focus": "S06.续跑-第1层已采过、第2层还没采,先去第2层"
     },
     "Collect_S06_Stage_Done_F1": {
-        "desc": "第1层采完 | UpdateTag(S06_F1,1) 后去点楼梯上第2层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
+        "desc": "第1层采完 | UpdateTag(S06_F1,-1) 后去点楼梯上第2层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
         "max_hit": 30,
         "recognition": "DirectHit",
         "action": "Custom",
         "custom_action": "UpdateTag",
         "custom_action_param": {
             "tag": "S06_F1",
-            "value": 1
+            "value": -1
         },
         "post_delay": 0,
         "next": [
@@ -190,14 +185,14 @@
         "focus": "S06.第1层已采完-去第2层"
     },
     "Collect_S06_Stage_Done_F2": {
-        "desc": "第2层采完 | UpdateTag(S06_F2,1) 后快速移动回狩猎场，再选第6层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
+        "desc": "第2层采完 | UpdateTag(S06_F2,-1) 后快速移动回狩猎场，再选第6层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
         "max_hit": 30,
         "recognition": "DirectHit",
         "action": "Custom",
         "custom_action": "UpdateTag",
         "custom_action_param": {
             "tag": "S06_F2",
-            "value": 1
+            "value": -1
         },
         "post_delay": 0,
         "next": [
@@ -206,14 +201,14 @@
         "focus": "S06.第2层已采完，返回狩猎场传送阵"
     },
     "Collect_S06_Stage_Done_F6": {
-        "desc": "第6层采完 | UpdateTag(S06_F6,1) 后点红叉下第5层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
+        "desc": "第6层采完 | UpdateTag(S06_F6,-1) 后点红叉下第5层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
         "max_hit": 30,
         "recognition": "DirectHit",
         "action": "Custom",
         "custom_action": "UpdateTag",
         "custom_action_param": {
             "tag": "S06_F6",
-            "value": 1
+            "value": -1
         },
         "post_delay": 0,
         "next": [
@@ -222,14 +217,14 @@
         "focus": "S06.第6层已采完-下第5层"
     },
     "Collect_S06_Stage_Done_F5": {
-        "desc": "第5层采完 | UpdateTag(S06_F5,1) 后整卡成功收尾，不再走回第6层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
+        "desc": "第5层采完 | UpdateTag(S06_F5,-1) 后整卡成功收尾，不再走回第6层。 | 技能模块正常出口直接到这里：中途失败到不了，本层标签保持未置位，同轮重进卡带时会重采，宁可重采不漏采。",
         "max_hit": 30,
         "recognition": "DirectHit",
         "action": "Custom",
         "custom_action": "UpdateTag",
         "custom_action_param": {
             "tag": "S06_F5",
-            "value": 1
+            "value": -1
         },
         "post_delay": 0,
         "next": [
@@ -435,9 +430,6 @@
         },
         "post_delay": 500,
         "timeout": 5000,
-        "on_error": [
-            "Global_Null"
-        ],
         "focus": "S06.传送面板向左翻一页"
     },
     "Collect_S06_Panel_Ck_F1": {
@@ -489,7 +481,7 @@
         "pre_delay": 0,
         "post_delay": 0,
         "next": [
-            "Collect_S06_Resume_F1_Ck",
+            "Collect_S06_Skip_F1",
             "Collect_S06_1F_Skill"
         ]
     },
@@ -543,16 +535,16 @@
         "focus": "S06.点第6层魔法阵图标"
     },
     "Collect_S06_Panel_Arrive": {
-        "desc": "传送第6层后的到达分流 | 载入结束回到箱庭即在第6层：第6层未采去采集；已采但第5层未采直接下第5层；都采过就收尾。 | 不开区域地图核对：Panel_Ck_F6 点传送前已用名条确认是第6层页，传送只会到这一层。",
+        "desc": "传送第6层后的到达分流 | 载入结束回到箱庭即在第6层：第5层已采就收尾；第6层已采直接下第5层；否则采第6层。 | 不开区域地图核对：Panel_Ck_F6 点传送前已用名条确认是第6层页，传送只会到这一层。",
         "recognition": "Or",
         "any_of": [
             "Rec_SandBox_Pin_Tpl",
             "Rec_SandBox_Run_Tpl"
         ],
         "next": [
-            "Collect_S06_6F_Check",
-            "Collect_S06_NotYetF5",
-            "Collect_S06_Finish"
+            "Collect_S06_Skip_F5",
+            "Collect_S06_Skip_F6",
+            "Collect_S06_6F_Skill"
         ],
         "focus": "S06.已传送到第6层"
     },
@@ -574,24 +566,8 @@
         ],
         "focus": "S06.第6层采集"
     },
-    "Collect_S06_NotYetF5": {
-        "desc": "第6层已采、第5层未采时下第5层 | CheckTag(S06_F5, max=1)，命中 = 未采。 | 只在第6层已采时被问到，服务于同轮重进卡带；正常顺序由 Stage_Done_F6 直接去点红叉。",
-        "max_hit": 30,
-        "recognition": "Custom",
-        "custom_recognition": "CheckTag",
-        "custom_recognition_param": {
-            "tag": "S06_F5",
-            "max": 1
-        },
-        "action": "DoNothing",
-        "post_delay": 0,
-        "next": [
-            "Collect_S06_6F_To5F"
-        ],
-        "focus": "S06.第5层这次还没采-先下去"
-    },
     "Collect_S06_6F_To5F": {
-        "desc": "第6层点红叉下到第5层 | 静候 3 秒后由 SmartAction 代点 Mark_F6_Click，画面没动原地重点，最多 3 轮；之后交 5F_WaitArrive 等到达并开图核对。 | 只从 Stage_Done_F6、NotYetF5、Ck_StillF6 进来，三处都已确认人在第6层，on_error 的固定坐标兜底因此只会点在第6层。三轮都没动静时 on_error 按固定坐标再点一次；max_hit 3 用完退栈。",
+        "desc": "第6层点红叉下到第5层 | 静候 3 秒后由 SmartAction 代点 Mark_F6_Click，画面没动原地重点，最多 3 轮；之后交 5F_WaitArrive 等到达并开图核对。 | 只从 Stage_Done_F6、Skip_F6、Ck_StillF6 进来，三处都已确认人在第6层，on_error 的固定坐标兜底因此只会点在第6层。三轮都没动静时 on_error 按固定坐标再点一次；max_hit 3 用完退栈。",
         "max_hit": 3,
         "recognition": "Or",
         "any_of": [
@@ -795,7 +771,7 @@
         "focus": "S06.校验-区域地图标题=施塔因之塔第6层"
     },
     "Collect_S06_Ck_F5": {
-        "desc": "核对已到第5层 | 区域地图标题为第5层后点左上返回 (111,41) 关图，再看进度：第5层未采去采集，已采直接收尾。 | 第2、5层在移动魔法阵面板里没有页，只能靠区域地图标题认楼层。(111,41) 只能在地图打开时点，地图没开时那里是 buff 图标，会弹出『应用效果』窗口。",
+        "desc": "核对已到第5层 | 区域地图标题为第5层后点左上返回 (111,41) 关图，再看进度：第5层已采直接收尾，否则采第5层。 | 第2、5层在移动魔法阵面板里没有页，只能靠区域地图标题认楼层。(111,41) 只能在地图打开时点，地图没开时那里是 buff 图标，会弹出『应用效果』窗口。",
         "max_hit": 3,
         "recognition": "Or",
         "any_of": [
@@ -810,8 +786,8 @@
         ],
         "post_delay": 2000,
         "next": [
-            "Collect_S06_5F_Check",
-            "Collect_S06_Finish"
+            "Collect_S06_Skip_F5",
+            "Collect_S06_5F_Skill"
         ],
         "focus": "S06.[校验]已在施塔因之塔第5层"
     },

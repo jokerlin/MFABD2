@@ -242,9 +242,9 @@
         "inverse": true,
         "timeout": 10000,
         "next": [
+            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk",
             "Global_ToSandBox_Enter",
             "Global_ToSandBox_Reset",
-            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk",
             "[JumpBack]Global_WaitingForLoading"
         ],
         "on_error": [
@@ -274,9 +274,9 @@
         "post_delay": 4000,
         "next": [
             "[JumpBack]Global_WaitingForLoading",
+            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk",
             "Global_ToSandBox_Enter",
-            "Global_ToSandBox_Reset",
-            "[JumpBack]AutoBattle_Egress_TurnBack_SkipTalk"
+            "Global_ToSandBox_Reset"
         ],
         "on_error": [
             "[JumpBack]StartGame_Special",
@@ -296,10 +296,23 @@
         "focus": "G=1.页面非预期，点击返回按钮"
     },
     "Global_ToSandBox_Enter": {
-        "recognition": "Or",
-        "any_of": [
-            "Rec_SandBox_Pin_Tpl",
-            "Rec_SandBox_Run_Tpl"
+        "desc": "箱庭标记可见且没有剧情跳过按钮才算恢复完成，避免对话覆盖层穿透入口判断。",
+        "recognition": "And",
+        "all_of": [
+            {
+                "recognition": "Or",
+                "any_of": [
+                    "Rec_SandBox_Pin_Tpl",
+                    "Rec_SandBox_Run_Tpl"
+                ]
+            },
+            {
+                "recognition": "Custom",
+                "custom_recognition": "NotRecognition",
+                "custom_recognition_param": {
+                    "node": "AutoBattle_Egress_TurnBack_SkipTalk"
+                }
+            }
         ],
         "focus": "GO.复位到箱庭-已确认"
     },

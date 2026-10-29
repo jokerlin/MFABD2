@@ -21,11 +21,13 @@ import numpy as np
 
 try:
     from .rdd_hsv_rescue import (
+        bloated_hits,
         boxes_agree,
         channel_cutpoints,
         cut_happened,
         direction_cut,
         direction_deltas,
+        hits_agree,
         hue_axis,
         hue_cutpoint,
         hue_keep_for,
@@ -43,11 +45,13 @@ try:
     )
 except ImportError:
     from rdd_hsv_rescue import (
+        bloated_hits,
         boxes_agree,
         channel_cutpoints,
         cut_happened,
         direction_cut,
         direction_deltas,
+        hits_agree,
         hue_axis,
         hue_cutpoint,
         hue_keep_for,
@@ -485,6 +489,36 @@ class LayeredRescueTest(unittest.TestCase):
         c = a.copy()
         c[1, 2] = False
         self.assertNotEqual(pixel_set_key(a, 5, 7), pixel_set_key(c, 5, 7))
+
+
+class SameDotTest(unittest.TestCase):
+    """不同切法的命中是不是同一个红点：框 IoU 过闸，或围住同一个"!"。"""
+
+    # 2026-10-29 GachaADV_Location1 实测三框；白芯用一小块公共像素代表同一个"!"
+    BLOATED = (15, 7, 27, 22)
+    CLEAN_S = (25, 7, 18, 16)
+    CLEAN_SV = (25, 7, 17, 16)
+    CORE = frozenset({(10, 33), (11, 33), (12, 33)})
+
+    def test_shared_core_rescues_low_iou_pair(self):
+        """虚胖框对干净框 IoU 0.485，但围住同一个"!" —— 同一处，不是方向歧义。"""
+        hits = [(self.BLOATED, self.CORE), (self.CLEAN_S, self.CORE), (self.CLEAN_SV, self.CORE)]
+        self.assertFalse(boxes_agree([h[0] for h in hits]))
+        self.assertTrue(hits_agree(hits))
+
+    def test_low_iou_without_shared_core_is_still_ambiguous(self):
+        other = frozenset({(30, 5), (31, 5)})
+        self.assertFalse(hits_agree([(self.BLOATED, other), (self.CLEAN_S, self.CORE)]))
+
+    def test_iou_rule_unchanged_even_without_core(self):
+        """IoU 过闸的组合照旧算一致，与白芯无关（原有采纳一个不变）。"""
+        self.assertTrue(hits_agree([((25, 6, 18, 18), frozenset()), ((25, 7, 18, 17), frozenset())]))
+
+    def test_bloated_hit_is_excluded_from_adoption(self):
+        hits = [(self.BLOATED, self.CORE), (self.CLEAN_S, self.CORE), (self.CLEAN_SV, self.CORE)]
+        self.assertEqual(bloated_hits(hits), {0})
+        # IoU 过闸的组合谁都不算虚胖
+        self.assertEqual(bloated_hits([(self.CLEAN_S, self.CORE), (self.CLEAN_SV, self.CORE)]), set())
 
 
 if __name__ == "__main__":

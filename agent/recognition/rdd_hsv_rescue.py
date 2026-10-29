@@ -515,6 +515,51 @@ def boxes_agree(boxes: Sequence[Sequence[int]], min_iou: float = 0.5) -> bool:
                for right in boxes[i + 1:])
 
 
+def _same_core(left, right) -> bool:
+    """两个命中的白芯有公共像素：围住的是同一个"!"，即同一个红点。"""
+    return bool(left[1] & right[1])
+
+
+def hits_agree(hits: Sequence[Tuple[Sequence[int], frozenset]],
+               min_iou: float = 0.5) -> bool:
+    """多个切法的命中是否指向同一个红点。hits = [(框, 白芯像素集合)]，两两比较。
+
+    任一对满足其一即算同一处：
+      · 框 IoU ≥ min_iou —— boxes_agree 的原判据，原来判一致的组合一个不变；
+      · **两者白芯有公共像素** —— 围住的是同一个"!"。白"!"在任何收紧档下都不红，
+        不同切法只改它外面那圈红的厚薄和连带的背景，"!"本身的像素不动；两个不同红点
+        的"!"是不同的像素，不可能重叠。所以"同芯"比框的几何关系更直接地回答"是不是同一个"。
+
+    起因 GachaADV_Location1（2026-10-29 真机）：亮度 Δ[0,64] → [15,7,27,22]，红点左下
+    多拖一条品红卡面；饱和 Δ[30,0] → [25,7,18,16]、双切 → [25,7,17,16] 是红点本体。
+    三者围住同一个"!"，亮度对饱和 IoU 0.485 只差 0.015，被判方向歧义、救援放弃。
+    没用"一框包住另一框"：亮度那刀顺手削掉了红点最右一列，虚胖框反而比干净框窄 1 列。
+    """
+    for i, left in enumerate(hits):
+        for right in hits[i + 1:]:
+            if _box_iou(left[0], right[0]) >= min_iou or _same_core(left, right):
+                continue
+            return False
+    return True
+
+
+def bloated_hits(hits: Sequence[Tuple[Sequence[int], frozenset]],
+                 min_iou: float = 0.5) -> set:
+    """只靠"同芯"才与别的命中对上、且框更大的那些命中的下标。
+
+    同一个"!"外面框得更大，多出来的就是连带的背景（虚胖框）。它们不参与采纳 ——
+    否则增量更小的虚胖框会胜出。IoU 已过闸的组合不算，原有的采纳结果不变。
+    """
+    out = set()
+    for i, big in enumerate(hits):
+        for j, small in enumerate(hits):
+            if i == j or _box_iou(big[0], small[0]) >= min_iou or not _same_core(big, small):
+                continue
+            if int(big[0][2]) * int(big[0][3]) > int(small[0][2]) * int(small[0][3]):
+                out.add(i)
+    return out
+
+
 def lineage_parent(
     blob_mask: np.ndarray,
     baseline_labels: np.ndarray,

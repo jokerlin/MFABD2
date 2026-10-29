@@ -18,10 +18,11 @@ from .rdd_sampler import RddSampler
 from .rdd_hsv_rescue import (
     HUE_DIRECTIONS,
     SV_DIRECTIONS,
-    boxes_agree,
+    bloated_hits,
     channel_cutpoints,
     cut_happened,
     direction_cut,
+    hits_agree,
     hue_neighbor_states,
     is_strict_mask,
     lineage_parent,
@@ -1239,7 +1240,8 @@ class RedDotDetector(CustomRecognition):
         流程（每个候选父块，按"像不像红点"排序后依次处理）：
           1. 取该父块像素，S/V 各做一次直方图 → Otsu 切点；色相在展开轴上另算一刀（微秒级）
           2. 三个切法(只切亮度/只切饱和/双切)各跑一次**主档**
-          3. 命中位置一致 → 取增量最小的切法；位置分散 → 判方向歧义，拒绝
+          3. 命中指向同一个红点（框 IoU 过闸，或围住同一个"!"，见 hits_agree）
+             → 取增量最小的切法，同芯而框更大的虚胖框不算；指向不同处 → 判方向歧义，拒绝
           4. 对选中切法补跑上下**陪跑档**，交 select_stable_winner 判跨档稳定
           5. S/V 没得出稳定解（一个没中 / 中了不稳）→ 色相两个切法照 2~4 再走一遍；
              S/V 曾命中的框也要与色相的框对得上，否则同样判方向歧义
@@ -1313,13 +1315,13 @@ class RedDotDetector(CustomRecognition):
                 return True
             return False
 
-        def run_group(base, ranges, geo, row, cuts, directions, prior_boxes,
+        def run_group(base, ranges, geo, row, cuts, directions, prior_hits,
                       layer, stuck):
             """一组切法走完 主档 → 位置一致 → 陪跑档 → 跨档稳定。
 
-            返回 (判定, 胜出记录, 支撑, 主档切法, 胜出方向, 本组主档命中框)；
-            判定为 None 表示本组一个主档都没命中，"方向歧义"表示命中位置分散。
-            prior_boxes 是前一组(S/V)主档命中的框，须与本组的框一并对得上。
+            返回 (判定, 胜出记录, 支撑, 主档切法, 胜出方向, 本组主档命中)；
+            判定为 None 表示本组没有可采纳的主档命中，"方向歧义"表示命中位置分散。
+            命中 = (框, 白芯像素)；prior_hits 是前一组(S/V)的主档命中，须与本组一并对得上。
             主档卡在 aspect/confidence 的切法连同窗口追加进 stuck，供往下一层取子块。
             """
             nonlocal full_runs
@@ -1345,14 +1347,22 @@ class RedDotDetector(CustomRecognition):
                 elif blocked in ("aspect", "confidence"):
                     stuck.append((direction, cut, window))
 
-            boxes = [c["box_local"] for _, c in probes.values()]
+            names = list(probes)
+            hits = [(probes[d][1]["box_local"], self._core_pixels(probes[d][1]))
+                    for d in names]
             if not probes:
-                return None, None, [], None, None, boxes
-            # 不同切法必须指向同一处，否则是真歧义
-            if not boxes_agree(list(prior_boxes) + boxes):
-                return "方向歧义", None, [], None, None, boxes
+                return None, None, [], None, None, hits
+            # 不同切法必须指向同一个红点，否则是真歧义（判据见 hits_agree）
+            every = list(prior_hits) + hits
+            if not hits_agree(every):
+                return "方向歧义", None, [], None, None, hits
+            # 只靠"同芯"对上、框更大的命中连着背景（虚胖框），不参与采纳
+            bloated = bloated_hits(every)
+            usable = [d for k, d in enumerate(names) if k + len(prior_hits) not in bloated]
+            if not usable:
+                return None, None, [], None, None, hits
 
-            win_direction = min(probes, key=lambda d: (
+            win_direction = min(usable, key=lambda d: (
                 probes[d][0]["delta_s"] + probes[d][0]["delta_v"]))
             main_cut, main_cand = probes[win_direction]
 
@@ -1392,7 +1402,7 @@ class RedDotDetector(CustomRecognition):
             group_winner, group_decision, group_support = select_stable_winner(
                 records, config["min_stable_states"])
             return (group_decision, group_winner, group_support,
-                    main_cut, win_direction, boxes)
+                    main_cut, win_direction, hits)
 
         def explore(base, ranges, geo, row, cuts, layer, path):
             """在一个父块上走一层(第 2~5 步)；没结论且还有层数，就往下一层。
@@ -1538,6 +1548,13 @@ class RedDotDetector(CustomRecognition):
                 public["胜出"]["路径"] = win_path
                 public["胜出"]["末层切点"] = win_cuts
         return public
+
+    @staticmethod
+    def _core_pixels(cand):
+        """候选白芯在 ROI 坐标系下的像素集合，用来判两个命中是不是同一个"!"。"""
+        x, y = int(cand["box_local"][0]), int(cand["box_local"][1])
+        ys, xs = np.nonzero(cand["inner"])
+        return frozenset(zip((ys + y).tolist(), (xs + x).tolist()))
 
     @staticmethod
     def _cut_key(cut):

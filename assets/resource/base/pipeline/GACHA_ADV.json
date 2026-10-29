@@ -309,11 +309,16 @@
         "focus": "GA.抽卡收尾确认首页无红点,当天完成已记录"
     },
     "GachaADV_Location1": {
-        "desc": "卡池列第1格有红点就点进去。红点识别在前，认不出再用红点图标模板兜底：这一格进页时默认选中、卡面全亮，右侧预览立绘又会动，红点常与背景连片。",
-        "recognition": "Or",
-        "any_of": [
-            "Rec_<GachaADV_Location1>_Csm",
-            "Rec_<GachaADV_Location1>_Tpl"
+        "recognition": "Custom",
+        "custom_recognition": "RedDotDetector",
+        "custom_recognition_param": {
+            "preset": "Agt_RedDot_Preset"
+        },
+        "roi": [
+            315,
+            130,
+            47,
+            42
         ],
         "action": "Click",
         "target_offset": [
@@ -327,35 +332,6 @@
             "GachaADV_Location1_hub"
         ],
         "focus": "GAB.进入卡池列位置1"
-    },
-    "Rec_<GachaADV_Location1>_Csm": {
-        "desc": "[识别]卡池列第1格红点,RedDotDetector",
-        "recognition": "Custom",
-        "custom_recognition": "RedDotDetector",
-        "custom_recognition_param": {
-            "preset": "Agt_RedDot_Preset"
-        },
-        "roi": [
-            315,
-            130,
-            47,
-            42
-        ]
-    },
-    "Rec_<GachaADV_Location1>_Tpl": {
-        "desc": "[识别]卡池列第1格红点,图标模板兜底。只认菱形叹号本体(外缘绿遮),不看背景;模板取自模拟器画面,PC 渲染不同不适用。MaaFw 实测本 ROI 有红点 0.976~1.0、无红点≤0.513(2026-10-28,22帧)",
-        "recognition": "TemplateMatch",
-        "roi": [
-            315,
-            130,
-            47,
-            42
-        ],
-        "template": [
-            "UI_RedDot_GE.png"
-        ],
-        "green_mask": true,
-        "threshold": 0.8
     },
     "GachaADV_Location1_hub": {
         "action": "Click",

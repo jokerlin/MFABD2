@@ -96,6 +96,12 @@
         "count": 10
     },
     "GachaADV_Location1": {
+        "desc": "PC 只走红点识别：base 的图标模板兜底取自模拟器画面，PC 渲染不同(同模板仅 0.62~0.65)，不用。",
+        "any_of": [
+            "Rec_<GachaADV_Location1>_Csm"
+        ]
+    },
+    "Rec_<GachaADV_Location1>_Csm": {
         "roi": [
             279,
             157,

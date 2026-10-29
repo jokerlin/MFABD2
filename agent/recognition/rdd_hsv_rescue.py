@@ -10,6 +10,9 @@
     位置一致才选增量最小者补跑陪跑档 —— 避免三组各自成稳定分量而互判歧义；
   · 色相另成两个方向（色相上/色相下）：在"展开轴"上算一刀、两侧各试一次，
     是后手 —— 只在 S/V 没得出稳定解时补试，S/V 救得回的帧行为逐位不变；
+  · 分层（max_depth>1）：一层五个切法都没得出结论时，在切出来、仍卡住的子块上
+    **重算**切点再切一层；子树无解就退回上一层换下一个切法。连片的背景常不止一种，
+    各差在不同维度，切掉一种之后剩下的块才在另一维上分得开；
   · 代码中不得出现来自样本的阈值常数，max_delta_* 只作安全护栏，不是工作点。
 """
 
@@ -36,6 +39,9 @@ DEFAULT_RESCUE_CONFIG: Dict[str, Any] = {
     "entry_confidence_rej": "shadow",
     "max_delta_s": 110,     # 护栏，非工作点
     "max_delta_v": 110,     # 护栏，非工作点
+    # 分层救援的层数上限。1 = 只切一层（v3 原有行为，逐位不变）；
+    # >1 时某层没得出结论，就在该层切出、仍卡住的子块上重算切点再切一层。见 _run_hsv_rescue。
+    "max_depth": 1,
     "max_full_runs": 12,
     "min_stable_states": 2,
     "max_parents": 5,
@@ -121,7 +127,7 @@ def normalize_rescue_config(raw: Any) -> Tuple[Dict[str, Any], Optional[str]]:
             if cfg[key] not in _ENTRY_MODES:
                 raise ValueError(f"{key} 仅支持 off/shadow/active/inherit")
 
-        for key in ("max_delta_s", "max_delta_v", "max_full_runs",
+        for key in ("max_delta_s", "max_delta_v", "max_depth", "max_full_runs",
                     "min_stable_states", "max_parents", "time_budget_ms"):
             cfg[key] = int(cfg[key])
 
@@ -133,6 +139,8 @@ def normalize_rescue_config(raw: Any) -> Tuple[Dict[str, Any], Optional[str]]:
             raise ValueError("min_stable_states 必须 >= 2")
         if cfg["max_parents"] < 1:
             raise ValueError("max_parents 必须 >= 1")
+        if cfg["max_depth"] < 1:
+            raise ValueError("max_depth 必须 >= 1")
         if cfg["time_budget_ms"] <= 0:
             raise ValueError("time_budget_ms 必须 > 0")
         if cfg["max_delta_s"] > 115 or cfg["max_delta_v"] > 135:
@@ -141,6 +149,8 @@ def normalize_rescue_config(raw: Any) -> Tuple[Dict[str, Any], Optional[str]]:
             raise ValueError("max_full_runs 超过安全上限 32")
         if cfg["max_parents"] > 16:
             raise ValueError("max_parents 超过安全上限 16")
+        if cfg["max_depth"] > 4:
+            raise ValueError("max_depth 超过安全上限 4")
         if cfg["time_budget_ms"] > 2000:
             raise ValueError("time_budget_ms 超过安全上限 2000")
     except (TypeError, ValueError) as exc:
@@ -224,6 +234,16 @@ def is_strict_mask(candidate: np.ndarray, baseline: np.ndarray) -> bool:
 
 def mask_digest(mask: np.ndarray) -> str:
     return hashlib.sha1(np.ascontiguousarray(mask).view(np.uint8)).hexdigest()
+
+
+def pixel_set_key(mask: np.ndarray, x0: int, y0: int) -> str:
+    """局部窗口里一块像素在 ROI 坐标系下的身份。与窗口大小、偏移无关，同一块像素同一个值。
+
+    分层救援用它去重：不同路径切出同一块子块时，在它上面重算出的切点也相同，再想一遍是白跑。
+    """
+    ys, xs = np.nonzero(mask)
+    coords = np.stack([ys + int(y0), xs + int(x0)]).astype(np.int32)
+    return hashlib.sha1(np.ascontiguousarray(coords).tobytes()).hexdigest()
 
 
 def otsu_threshold(values: np.ndarray, center_plateau: bool = False) -> Optional[int]:

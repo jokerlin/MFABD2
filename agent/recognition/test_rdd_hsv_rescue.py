@@ -35,6 +35,7 @@ try:
         neighbor_states,
         normalize_rescue_config,
         otsu_threshold,
+        pixel_set_key,
         resolve_entry_plan,
         select_stable_winner,
         sort_parents,
@@ -56,6 +57,7 @@ except ImportError:
         neighbor_states,
         normalize_rescue_config,
         otsu_threshold,
+        pixel_set_key,
         resolve_entry_plan,
         select_stable_winner,
         sort_parents,
@@ -453,6 +455,36 @@ class HueCutTest(unittest.TestCase):
         winner, reason, _ = select_stable_winner(records, 2)
         self.assertEqual(reason, "stable_hit")
         self.assertEqual(winner["state"]["hue_cut"], -6)
+
+
+class LayeredRescueTest(unittest.TestCase):
+    """分层救援的纯算法部分：层数开关与子块去重。递归本体在识别器里，靠语料回放验收。"""
+
+    def test_max_depth_defaults_to_single_layer(self):
+        """没写 max_depth 的 preset 维持单层 —— 现有 pipeline 行为逐位不变。"""
+        cfg, error = normalize_rescue_config({"mode": "active"})
+        self.assertIsNone(error)
+        self.assertEqual(cfg["max_depth"], 1)
+        cfg, error = normalize_rescue_config({"mode": "active", "max_depth": 3})
+        self.assertIsNone(error)
+        self.assertEqual(cfg["max_depth"], 3)
+
+    def test_max_depth_out_of_range_fails_closed(self):
+        for bad in (0, 5):
+            cfg, error = normalize_rescue_config({"mode": "active", "max_depth": bad})
+            self.assertIsNotNone(error)
+            self.assertEqual(cfg["mode"], "off")
+
+    def test_pixel_set_key_ignores_window_offset(self):
+        """同一块像素放在不同窗口里，身份相同；换一块像素，身份不同。"""
+        a = np.zeros((6, 6), dtype=bool)
+        a[1:3, 2:4] = True
+        b = np.zeros((10, 10), dtype=bool)
+        b[4:6, 3:5] = True      # a 的窗口从 (5,7) 起、b 的从 (4,4) 起，ROI 坐标都是 y8~9 x7~8
+        self.assertEqual(pixel_set_key(a, 5, 7), pixel_set_key(b, 4, 4))
+        c = a.copy()
+        c[1, 2] = False
+        self.assertNotEqual(pixel_set_key(a, 5, 7), pixel_set_key(c, 5, 7))
 
 
 if __name__ == "__main__":

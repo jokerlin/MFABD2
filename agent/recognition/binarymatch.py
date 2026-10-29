@@ -27,6 +27,7 @@ from .rdd_hsv_rescue import (
     lineage_parent,
     neighbor_states,
     normalize_rescue_config,
+    pixel_set_key,
     resolve_entry_plan,
     select_stable_winner,
     sort_parents,
@@ -384,6 +385,8 @@ class HSVShapeMatching(CustomRecognition):
 #   flt_hsv_rescue (object) 严格 HSV 拓扑救援。mode=off/shadow/active；仅 baseline
 #                          最终卡 aspect 时提高 S/V lower，严格子集经 lineage+跨档稳定
 #                          后才可命中。默认 off；预算/歧义/异常均 fail closed。
+#                          max_depth>1 时分层：一层没结论，就在切剩、仍卡住的子块上重算
+#                          切点再切一层（缺省 1 = 单层）。见 _run_hsv_rescue。
 #
 #   旧名对照(存量节点仍可用，由 _PARAM_ALIAS 翻译；同时写则新名优先)：
 #       flt_red_hsv ← hsv_ranges      flt_area     ← red_area
@@ -1117,15 +1120,18 @@ class RedDotDetector(CustomRecognition):
     def _rescue_try(self, *, hsv_np, baseline, geo, delta_s, delta_v,
                     hsv_ranges, area_range, aspect_range, gap_ratio,
                     min_conf, rx, ry, hue_keep=None):
-        """在**父块外接框**内跑一次完整检测链，返回 (候选, 卡在, 红像素数)。
+        """在**父块外接框**内跑一次完整检测链，返回 (候选, 卡在, 红像素数, 窗口)。
 
         只在局部重跑而非整个 ROI：救援的判定被 lineage 限定在这一个父块内，
         框选区其余像素怎么变都与结论无关。实测 23 处对比与全区重跑逐位一致，
         平均提速 5.8 倍，且成本随父块（受面积闸约束 ≤ area_max）而非 ROI 增长。
+
+        窗口 = (局部检测结果, x0, y0, 收紧后的 profile)：分层救援从卡住的切法往下一层时
+        直接从里面取子块，不再重跑。参数/窗口无效时为 None。
         """
         profile = strict_profile(hsv_ranges, delta_s, delta_v, hue_keep)
         if profile is None:
-            return None, "参数", 0
+            return None, "参数", 0, None
 
         h, w = hsv_np.shape[:2]
         x0 = max(0, int(geo["x"]) - _RESCUE_PAD)
@@ -1133,7 +1139,7 @@ class RedDotDetector(CustomRecognition):
         x1 = min(w, int(geo["x"]) + int(geo["w"]) + _RESCUE_PAD)
         y1 = min(h, int(geo["y"]) + int(geo["h"]) + _RESCUE_PAD)
         if x1 <= x0 or y1 <= y0:
-            return None, "窗口", 0
+            return None, "窗口", 0, None
 
         sub_hsv = hsv_np[y0:y1, x0:x1]
         sub_base_mask = baseline["red_mask"][y0:y1, x0:x1]
@@ -1144,10 +1150,11 @@ class RedDotDetector(CustomRecognition):
             aspect_range[0], aspect_range[1], gap_ratio, min_conf,
             rx + x0, ry + y0, collect_all=True,
         )
+        window = (out, x0, y0, profile)
         red_px = int(out["stat"]["red_px"])
         # 严格子集：只许删红像素，不许凭空添红。
         if not is_strict_mask(out["red_mask"], sub_base_mask):
-            return None, "子集", red_px
+            return None, "子集", red_px, window
 
         uncut = False
         for cand in out["candidates"]:
@@ -1162,16 +1169,67 @@ class RedDotDetector(CustomRecognition):
                 continue
             cand["box_local"] = box_roi
             cand["profile"] = profile
-            return cand, None, red_px
+            return cand, None, red_px, window
 
         # 没有血统合格的候选：借 baseline 同一套诊断词表说明卡在哪步，
         # 好让 aspect(切得不够狠) 与 interior/red_mask(切过头) 一眼可分。
         if uncut:
-            return None, "未切开", red_px
+            return None, "未切开", red_px, window
         if out["candidates"]:
-            return None, "血统", red_px
+            return None, "血统", red_px, window
         stage, _ = self._diagnose(out["stat"], area_range[0], area_range[1], min_conf)
-        return None, stage, red_px
+        return None, stage, red_px, window
+
+    def _rescue_children(self, *, baseline, geo, window, root_red, seen):
+        """分层救援：从一次卡住的切法里取下一层的父块，返回 (子层基线, [子块几何])。
+
+        子层基线是 ROI 尺寸的掩膜/标号图，只在这次的局部窗口里有值 —— 下一层的父块都在
+        当前父块里，它们的局部窗口（外接框 ±_RESCUE_PAD）出不了当前窗口，窗口外读不到。
+        子块几何换回 ROI 坐标，"label" 是窗口内的标号，与子层基线的标号图对得上。
+
+        三道筛，都只删不增：
+          · 血统：子块像素必须全部落在当前父块内（窗口里别的红块切出来的不算）；
+          · 去重：同一块像素别的路径已经想过就跳过 —— 在它上面重算的切点也一样；
+          · 围白：子块的红像素在自身外接框里，至少围住一个**基线下就不红**的像素。
+            真红点的"!"是白的，任何收紧档下都不红，红圈只要还在就把它围着；
+            一个白像素都没围住的子块，后代怎么切也切不出真红点。结构论证，不含样本常数。
+        """
+        out, x0, y0, _profile = window
+        h, w = out["red_mask"].shape
+        current = baseline["labeled"][y0:y0 + h, x0:x0 + w] == geo["label"]
+        red = np.zeros_like(baseline["red_mask"])
+        labeled = np.zeros_like(baseline["labeled"])
+        red[y0:y0 + h, x0:x0 + w] = out["red_mask"]
+        labeled[y0:y0 + h, x0:x0 + w] = out["labeled"]
+        white = ~root_red[y0:y0 + h, x0:x0 + w]
+
+        kids = []
+        for parent in out["eligible_parents"]:
+            blob = out["labeled"] == parent["label"]
+            if not np.all(current[blob]):
+                continue
+            key = pixel_set_key(blob, x0, y0)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not self._encloses(blob, white):
+                continue
+            kids.append({**parent, "x": parent["x"] + x0, "y": parent["y"] + y0})
+        return {"red_mask": red, "labeled": labeled}, kids
+
+    @staticmethod
+    def _encloses(blob, target):
+        """blob 在自身外接框内围住的非 blob 区域里，有没有 target 像素。"""
+        rows = np.where(np.any(blob, axis=1))[0]
+        cols = np.where(np.any(blob, axis=0))[0]
+        y0, y1, x0, x1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
+        outside = ~blob[y0:y1, x0:x1]
+        labeled_crop, _ = _label_blobs(outside)
+        border = (set(labeled_crop[0, :].tolist()) | set(labeled_crop[-1, :].tolist())
+                  | set(labeled_crop[:, 0].tolist()) | set(labeled_crop[:, -1].tolist()))
+        border.discard(0)
+        enclosed = outside & ~np.isin(labeled_crop, list(border))
+        return bool(np.any(enclosed & target[y0:y1, x0:x1]))
 
     def _run_hsv_rescue(self, *, hsv_np, baseline, hsv_ranges, area_range,
                         aspect_range, gap_ratio, min_conf, rx, ry, config,
@@ -1194,14 +1252,27 @@ class RedDotDetector(CustomRecognition):
             不随入口数增长 —— 否则入口越多越容易撞出一个偶然能过的答案；
           · 各入口父块来源互斥，同一父块不会被两个入口各试一遍。
 
-        **时间预算管"要不要再试下一个父块"，不管"第一个试不试完"。** 首个父块的主档与
-        陪跑档必定跑完（成本由 max_full_runs 与面积闸封顶），之后才按墙钟判超时。
+        **分层（max_depth>1）**：某父块在第 1~5 步没得出结论（没中 / 不稳）时，取本层主档
+        "卡住"（aspect/confidence）的切法，在它切出来、仍卡住的子块上**重算切点**，
+        以收紧后的 profile 为新基线再走一遍 1~5（`explore` 递归）。子树无解就退回上一层
+        换下一个卡住的切法。起因 GachaADV_Location1（2026-10-28 23:15 真机）：红点左连
+        品红卡面(差在色相/饱和)、右连橙色头发(差在色相/亮度)，没有哪一刀能两边都切掉；
+        亮度切掉暗头发后，剩下的块饱和一刀切掉卡面，再剩下的块色相一刀切掉亮发丝，三层救回。
+          · 每层的验收与单层完全相同(严格子集/血统/确已切开/位置一致/跨档稳定)，
+            陪跑档只扰动本层这一刀；
+          · 方向歧义/同档多解/多解歧义在哪一层出现都原样上交，不换路 —— 那是安全拒绝；
+          · 往下取子块有三道筛(血统/去重/围白)，见 _rescue_children；
+          · 预算仍全局共享，层数不另给预算。
+
+        **时间预算管"要不要再试下一个父块"，不管"第一个试不试完"。** 首个父块（连同它
+        各层的子块）必定试完，成本由 max_full_runs 与面积闸封顶，之后才按墙钟判超时。
         起因 GachaADV_Location1（2026-10-28 真机）：进入抽卡页时进程被卡了约 110ms，
         恰好卡在算切点那 0.3ms 里，第一刀还没砍就判超时，重跑 0 次。外部卡顿已是
         沉没成本，因它放弃只会白白漏检；离线同图全程 3ms。
         """
         started = time.perf_counter()
         budget_ms = config["time_budget_ms"]
+        max_depth = config["max_depth"]
         guaranteed = False       # 正在处理的是不是首个父块（不受时间预算约束）
 
         def timed_out():
@@ -1225,41 +1296,54 @@ class RedDotDetector(CustomRecognition):
         full_runs = 0
         tried_parents = 0
         winner = decision = support = None
-        cutpoints = win_direction = win_main = None
+        cutpoints = win_direction = win_main = win_cuts = None
+        win_path = []
         win_entry = win_entry_mode = None
         stop_reason = "父块用尽"
+        root_red = baseline["red_mask"]
+        seen_blobs = set()       # 分层救援已想过的子块（像素集合）
 
-        def run_group(geo, row, cuts, directions, prior_boxes):
+        def out_of_budget():
+            nonlocal stop_reason
+            if timed_out():
+                stop_reason = "超时"
+                return True
+            if full_runs >= config["max_full_runs"]:
+                stop_reason = "重跑预算"
+                return True
+            return False
+
+        def run_group(base, ranges, geo, row, cuts, directions, prior_boxes,
+                      layer, stuck):
             """一组切法走完 主档 → 位置一致 → 陪跑档 → 跨档稳定。
 
             返回 (判定, 胜出记录, 支撑, 主档切法, 胜出方向, 本组主档命中框)；
             判定为 None 表示本组一个主档都没命中，"方向歧义"表示命中位置分散。
             prior_boxes 是前一组(S/V)主档命中的框，须与本组的框一并对得上。
+            主档卡在 aspect/confidence 的切法连同窗口追加进 stuck，供往下一层取子块。
             """
-            nonlocal full_runs, stop_reason
+            nonlocal full_runs
             probes, seen_cuts = {}, set()
             for direction in directions:
-                if timed_out():
-                    stop_reason = "超时"
-                    break
-                if full_runs >= config["max_full_runs"]:
-                    stop_reason = "重跑预算"
+                if out_of_budget():
                     break
                 cut = direction_cut(cuts, direction)
                 if cut is None or self._cut_key(cut) in seen_cuts:
                     continue          # 例如某通道增量为 0 时，双切与单切等价
                 seen_cuts.add(self._cut_key(cut))
-                cand, blocked, red_px = self._rescue_try(
-                    hsv_np=hsv_np, baseline=baseline, geo=geo,
+                cand, blocked, red_px, window = self._rescue_try(
+                    hsv_np=hsv_np, baseline=base, geo=geo,
                     delta_s=cut["delta_s"], delta_v=cut["delta_v"],
-                    hsv_ranges=hsv_ranges, area_range=area_range,
+                    hsv_ranges=ranges, area_range=area_range,
                     aspect_range=aspect_range, gap_ratio=gap_ratio,
                     min_conf=min_conf, rx=rx, ry=ry, hue_keep=cut["hue_keep"])
                 full_runs += 1
                 attempts.append(self._rescue_attempt(
-                    row["序"], direction, cut, red_px, blocked, cand))
+                    row["序"], direction, cut, red_px, blocked, cand, layer))
                 if cand is not None:
                     probes[direction] = (cut, cand)
+                elif blocked in ("aspect", "confidence"):
+                    stuck.append((direction, cut, window))
 
             boxes = [c["box_local"] for _, c in probes.values()]
             if not probes:
@@ -1283,23 +1367,19 @@ class RedDotDetector(CustomRecognition):
                 is_main = self._cut_key(state) == self._cut_key(main_cut)
                 cand = main_cand if is_main else None
                 if cand is None:
-                    if timed_out():
-                        stop_reason = "超时"
+                    if out_of_budget():
                         break
-                    if full_runs >= config["max_full_runs"]:
-                        stop_reason = "重跑预算"
-                        break
-                    cand, blocked, red_px = self._rescue_try(
-                        hsv_np=hsv_np, baseline=baseline, geo=geo,
+                    cand, blocked, red_px, _ = self._rescue_try(
+                        hsv_np=hsv_np, baseline=base, geo=geo,
                         delta_s=state["delta_s"], delta_v=state["delta_v"],
-                        hsv_ranges=hsv_ranges, area_range=area_range,
+                        hsv_ranges=ranges, area_range=area_range,
                         aspect_range=aspect_range, gap_ratio=gap_ratio,
                         min_conf=min_conf, rx=rx, ry=ry,
                         hue_keep=state.get("hue_keep"))
                     full_runs += 1
                     attempts.append(self._rescue_attempt(
                         row["序"], win_direction + "·陪跑", state,
-                        red_px, blocked, cand))
+                        red_px, blocked, cand, layer))
                 if cand is None:
                     continue
                 records.append({
@@ -1313,6 +1393,53 @@ class RedDotDetector(CustomRecognition):
                 records, config["min_stable_states"])
             return (group_decision, group_winner, group_support,
                     main_cut, win_direction, boxes)
+
+        def explore(base, ranges, geo, row, cuts, layer, path):
+            """在一个父块上走一层(第 2~5 步)；没结论且还有层数，就往下一层。
+
+            返回 (判定, 胜出记录, 支撑, 主档切法, 胜出方向, 该层切点, 路径)。
+            判定为 None / unstable_hit 时整棵子树都没救回，其余字段是**本层**的结论 ——
+            max_depth=1 时与分层前逐位一致。路径 = 走到胜出层之前切过的各刀。
+            """
+            stuck = []
+            # —— 第 2~4 步：S/V 三个切法先走一遍 ——
+            result = run_group(base, ranges, geo, row, cuts, SV_DIRECTIONS, (),
+                               layer, stuck)
+            # —— 第 5 步：色相后手 —— 只补"切不开"(没中/不稳)，不补"不该救"：
+            # 方向歧义、同档多解、多解歧义都是安全拒绝，换把刀重来等于绕过它们。
+            if result[0] in (None, "unstable_hit"):
+                hue = run_group(base, ranges, geo, row, cuts, HUE_DIRECTIONS,
+                                result[5], layer, stuck)
+                if result[0] is None or hue[0] == "stable_hit":
+                    result = hue
+            here = result[:5] + (cuts, path)
+            if result[0] not in (None, "unstable_hit") or layer >= max_depth:
+                return here
+
+            # —— 分层：沿本层卡住的切法，在切出来的子块上重算切点再走一层 ——
+            for direction, cut, window in stuck:
+                if out_of_budget():
+                    break
+                child_base, kids = self._rescue_children(
+                    baseline=base, geo=geo, window=window,
+                    root_red=root_red, seen=seen_blobs)
+                step = {"层": layer, "方向": direction,
+                        "增量": [int(cut["delta_s"]), int(cut["delta_v"])]}
+                if cut.get("hue_keep") is not None:
+                    step["色相保留"] = [int(v) for v in cut["hue_keep"]]
+                for kid in sort_parents(kids):
+                    if out_of_budget():
+                        break
+                    kid_cuts = channel_cutpoints(
+                        hsv_np[child_base["labeled"] == kid["label"]],
+                        window[3], config)
+                    if kid_cuts is None:
+                        continue
+                    sub = explore(child_base, window[3], kid, row, kid_cuts,
+                                  layer + 1, path + [step])
+                    if sub[0] not in (None, "unstable_hit"):
+                        return sub       # 稳定命中，或任一层的安全拒绝
+            return here
 
         for entry_key, entry_mode, geo in plan:
             row = {"序": len(parent_rows) + 1, "入口": entry_key,
@@ -1330,23 +1457,20 @@ class RedDotDetector(CustomRecognition):
                 stop_reason = "超时"
                 continue
 
-            pixels = hsv_np[baseline["labeled"] == geo["label"]]
+            parent_blob = baseline["labeled"] == geo["label"]
+            pixels = hsv_np[parent_blob]
             cuts = channel_cutpoints(pixels, hsv_ranges, config)
             if cuts is None:
                 row["跳过"] = "无法定点"
                 continue
             tried_parents += 1
             row["试了"] = True
+            if max_depth > 1:
+                seen_blobs.add(pixel_set_key(parent_blob, 0, 0))
 
-            # —— 第 2~4 步：S/V 三个切法先走一遍 ——
-            result = run_group(geo, row, cuts, SV_DIRECTIONS, ())
-            # —— 第 5 步：色相后手 —— 只补"切不开"(没中/不稳)，不补"不该救"：
-            # 方向歧义、同档多解、多解歧义都是安全拒绝，换把刀重来等于绕过它们。
-            if result[0] in (None, "unstable_hit"):
-                hue = run_group(geo, row, cuts, HUE_DIRECTIONS, result[5])
-                if result[0] is None or hue[0] == "stable_hit":
-                    result = hue
-            group_decision, cand_winner, cand_support, main_cut, direction, _ = result
+            result = explore(baseline, hsv_ranges, geo, row, cuts, 1, [])
+            (group_decision, cand_winner, cand_support, main_cut, direction,
+             layer_cuts, path) = result
             if group_decision is None:
                 continue
             if group_decision == "方向歧义":
@@ -1360,6 +1484,7 @@ class RedDotDetector(CustomRecognition):
             if group_decision == "stable_hit":
                 winner = cand_winner
                 win_main = main_cut
+                win_cuts, win_path = layer_cuts, path
                 win_entry, win_entry_mode = entry_key, entry_mode
                 stop_reason = "稳定命中"
             else:
@@ -1370,8 +1495,9 @@ class RedDotDetector(CustomRecognition):
         public = {
             "模式": config["mode"],
             "结论": _RESCUE_DECISION_CN.get(decision, decision),
-            "说明": self._rescue_hint(decision, win_direction, cutpoints,
-                                      winner, support),
+            "说明": self._rescue_hint(decision, win_direction,
+                                      win_cuts if win_path else cutpoints,
+                                      winner, support, win_path),
             "耗时ms": elapsed(),
             "切点": cutpoints,
             "尝试": attempts,
@@ -1394,6 +1520,7 @@ class RedDotDetector(CustomRecognition):
                 "方向": win_direction,
                 # 主档 = 切点直接算出的那一档；采纳档 = 复现组里最保守(增量最小)的一档。
                 # 两者可以不同，这不是矛盾：切点定位置，复现组决定最终取哪一档。
+                # 分层胜出时两者都相对胜出那一层的基线，之前各层切过的刀见"路径"。
                 "主档增量": ([win_main["delta_s"], win_main["delta_v"]]
                              if win_main else None),
                 "采纳增量": [winner["state"]["delta_s"],
@@ -1406,6 +1533,10 @@ class RedDotDetector(CustomRecognition):
                 # 色相切法的"增量"恒为 [0,0]，真正的档位是展开轴上保留的区间。
                 public["胜出"]["主档色相保留"] = list(win_main["hue_keep"])
                 public["胜出"]["采纳色相保留"] = list(winner["state"]["hue_keep"])
+            if win_path:
+                public["胜出"]["层"] = len(win_path) + 1
+                public["胜出"]["路径"] = win_path
+                public["胜出"]["末层切点"] = win_cuts
         return public
 
     @staticmethod
@@ -1416,11 +1547,16 @@ class RedDotDetector(CustomRecognition):
                 tuple(int(v) for v in keep) if keep is not None else None)
 
     @staticmethod
-    def _rescue_attempt(parent_no, direction, cut, red_px, blocked, cand):
-        """一条尝试记录。失败档不带 框/分（恒为空），省体积也少一层噪声。"""
+    def _rescue_attempt(parent_no, direction, cut, red_px, blocked, cand, layer=1):
+        """一条尝试记录。失败档不带 框/分（恒为空），省体积也少一层噪声。
+
+        第 1 层不带"层"字段，与分层前的记录逐位一致；增量/色相保留都相对本层基线。
+        """
         row = {"父块": parent_no, "方向": direction,
                "增量": [int(cut["delta_s"]), int(cut["delta_v"])], "红像素": int(red_px),
                "卡在": blocked}
+        if layer > 1:
+            row["层"] = layer
         if cut.get("hue_keep") is not None:
             row["色相保留"] = [int(v) for v in cut["hue_keep"]]
         if cand is not None:
@@ -1429,8 +1565,24 @@ class RedDotDetector(CustomRecognition):
         return row
 
     @staticmethod
-    def _rescue_hint(decision, direction, cutpoints, winner, support):
-        """一句话说清这次救援凭什么成立 / 因何不成立，措辞与调参方向对齐。"""
+    def _step_text(step):
+        """路径上的一刀 → 「亮度Δ[0,57]」/「色相上保留[-4,12]」。"""
+        keep = step.get("色相保留")
+        if keep is not None:
+            return f"{step['方向']}保留[{keep[0]},{keep[1]}]"
+        return f"{step['方向']}Δ[{step['增量'][0]},{step['增量'][1]}]"
+
+    @staticmethod
+    def _rescue_hint(decision, direction, cutpoints, winner, support, path=()):
+        """一句话说清这次救援凭什么成立 / 因何不成立，措辞与调参方向对齐。
+
+        分层胜出时 cutpoints 是胜出那一层的切点，前面各层切过的刀由 path 给出。
+        """
+        if decision == "stable_hit" and winner is not None and path:
+            head = RedDotDetector._rescue_hint(decision, direction, cutpoints,
+                                               winner, support)
+            steps = " → ".join(RedDotDetector._step_text(s) for s in path)
+            return f"分层{len(path) + 1}层，先切 {steps}，再在剩下的块上{head}"
         if decision == "stable_hit" and winner is not None:
             ds, dv = winner["state"]["delta_s"], winner["state"]["delta_v"]
             base = []
@@ -1469,7 +1621,9 @@ class RedDotDetector(CustomRecognition):
             keep = win.get("采纳色相保留")
             adopted = (f"保留[{keep[0]},{keep[1]}]" if keep is not None
                        else f"ΔS{win['采纳增量'][0]}/ΔV{win['采纳增量'][1]}")
-            tail = (f"{win['方向']}{adopted} "
+            path = "".join(f"{RedDotDetector._step_text(s)} → "
+                           for s in win.get("路径") or ())
+            tail = (f"{path}{win['方向']}{adopted} "
                     f"复现{win['复现']}档 → box={win['框']} 分{win['分']}")
         else:
             blocked = [a.get("卡在") for a in (rescue.get("尝试") or [])

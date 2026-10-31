@@ -769,9 +769,9 @@
                         "卢戈森林"
                     ]
                 },
-                "Collect_ClickTelepor_TargetClass_PurpleProcess": {
+                "Collect_ClickTelepor_TargetClass_Purple": {
                     "next": [
-                        "Collect_ClickTelepor_TargetClass_PurpleProcess"
+                        "Collect_ClickTelepor_TargetClass_Purple"
                     ],
                     "timeout": 5000,
                     "max_hit": 5
@@ -2054,7 +2054,8 @@
             99
         ],
         "expected": [
-            "天赋技能"
+            "天赋技能",
+            "天賦技能"
         ],
         "action": "Click",
         "target": [
@@ -2102,7 +2103,8 @@
             99
         ],
         "expected": [
-            "天赋技能"
+            "天赋技能",
+            "天賦技能"
         ],
         "action": "Swipe",
         "begin": [
@@ -2766,7 +2768,8 @@
             33
         ],
         "expected": [
-            "制伏"
+            "制伏",
+            "壓制"
         ],
         "action": "Click",
         "target_offset": [
